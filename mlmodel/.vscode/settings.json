@@ -1,0 +1,22 @@
+{
+    "cmake.configureOnOpen": false,
+    "cmake.generator": "Visual Studio 17 2022",
+    "cmake.platform": "x64",
+    "cmake.configureSettings": {
+        "CMAKE_CUDA_ARCHITECTURES": "75",
+        "CMAKE_BUILD_TYPE": "Release"
+    },
+    "cmake.buildDirectory": "${workspaceFolder}/build",
+    "cmake.debugConfig": {
+        "cwd": "${workspaceFolder}"
+    },
+    "files.associations": {
+        "*.cu": "cuda-cpp",
+        "*.cuh": "cuda-cpp",
+        "*.h": "cpp",
+        "*.cpp": "cpp"
+    },
+    "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+    "C_Cpp.default.intelliSenseMode": "windows-msvc-x64",
+    "C_Cpp.errorSquiggles": "disabled"
+}

@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="E:\development\BTCTimeSeries\mlmodel\build\CMakeFiles\b832fbc9c680e49e9e9e02e3984353be\generate.stamp.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{87D41471-E22E-3FBE-A90E-A600C4F20DE4}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>
