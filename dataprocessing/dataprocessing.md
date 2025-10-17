@@ -13,12 +13,13 @@ In this file, on chain metrics have been retrieved from Google BigQuery. While A
 Within some of these functions we have had to query the database by using SQL statements in order to retrieve the data. Some operations like SUM and AVG have been performed within the SQL for simplicity. We can then take the retrieved data from the SQL statement and put it into a Pandas dataframe, which can then easily be ported to the CSV file. 
 
 
-# Futures
+# Derivatives
 
-# Options
-
+In this file, the derivatives metrics have been retrieved and calculated from Derbit. This was by far the longest and most complex API retrival yet, and took a long time given the constraints around rate limits, but in around 500 lines of code we managed to get futures, options and order book data going back to May 2019 into a CSV file. To retrieve data we had to convert dates into timestamps to match the arguments listed in the docs, and then send the API request using the requests module. With this final CSV file we can now create the data tables for derivatives, on chain metrics and core market data as well as a final dataset for the ML model with normalised values which can be passed in to the network. 
 # Sources
 https://pandas.pydata.org/
 https://console.cloud.google.com/bigquery
-https://www.binance.us/institutions/market-history
+https://www.cryptodatadownload.com/data/deribit/
 https://www.deribit.com/statistics/BTC/options-data
+https://docs.deribit.com/
+

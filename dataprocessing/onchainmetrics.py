@@ -151,11 +151,8 @@ class CompleteDailyBitcoinMetrics:
         
         final_metrics = final_metrics.fillna(method='ffill')
         
-        missing = final_metrics.isnull().sum()
         
-        print(f"  Date range: {final_metrics.index.min().date()} to {final_metrics.index.max().date()}")
-        print(f"  Missing values per column:\n{missing}")
-       
+        
         
         return final_metrics
 

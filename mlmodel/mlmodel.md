@@ -1,1 +1,5 @@
-# mlmodel
+# MLModel
+
+
+#Sources 
+https://siboehm.com/articles/22/CUDA-MMM
