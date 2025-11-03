@@ -55,6 +55,7 @@ class DeribitUnifiedDownloader:
 
             params = {
                 'currency': currency,
+                'kind': kind,
                 'start_timestamp': current_start,
                 'end_timestamp': current_end,  
                 'count': 1000,
