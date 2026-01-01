@@ -16,10 +16,23 @@ Within some of these functions we have had to query the database by using SQL st
 # Derivatives
 
 In this file, the derivatives metrics have been retrieved and calculated from Derbit. This was by far the longest and most complex API retrival yet, and took a long time given the constraints around rate limits, but in around 500 lines of code we managed to get futures, options and order book data going back to May 2019 into a CSV file. To retrieve data we had to convert dates into timestamps to match the arguments listed in the docs, and then send the API request using the requests module. With this final CSV file we can now create the data tables for derivatives, on chain metrics and core market data as well as a final dataset for the ML model with normalised values which can be passed in to the network. 
+
+# Greeks
+
+This file contains data from options and futures data retrieved from pybit and yfinance. Some proxy metrics have been used due to the unavailability of options and futures contracts. The data retrieved in this filecompensates for some of the metrics that the derivatives file could not properly retrieve.
+
+# Metrics 
+In this file the final dataset is completed, by first accumulating all metrics in futures and greeks dataframes to daily then performing a rolling z score normalisation across all values. due to small standard deviation among some metrics an epsilon constant is added into the denominator, and values are clipped.
+
+
 # Sources
 https://pandas.pydata.org/
 https://console.cloud.google.com/bigquery
 https://www.cryptodatadownload.com/data/deribit/
 https://www.deribit.com/statistics/BTC/options-data
 https://docs.deribit.com/
+https://bybit-exchange.github.io/docs/v5/market/history-fund-rate
+https://docs.python.org/3/library/datetime.html
+https://en.wikipedia.org/wiki/ISO_8601
+
 

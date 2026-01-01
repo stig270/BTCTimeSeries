@@ -6,10 +6,14 @@
 #define ATTENTION_CUH
 
 struct AttentionBuffers {
+    float* theta;
     float* qkv;
     float* Q;
     float* K;
     float* V;
+    float* QR;
+    float* KR;
+    float* KT;
     float* scores;
     float* W;
     float* Y;
@@ -25,8 +29,7 @@ struct AttentionParams {
 };
 
 
-template<const uint BM, const uint BN, const uint BK, const uint TM, const uint TN>
-__device__ inline attentionForward(float* X, const AttentionBuffers& buffers, const AttentionParams& params, int T, int C, int N, int H){
+__device__ inline void attentionForward(float* X, const AttentionBuffers& buffers, const AttentionParams& params, int T, int C, int N, int H){
    
     float* qkvw = params.qkvw;
     float* qkvb = params.qkvb;
@@ -36,14 +39,18 @@ __device__ inline attentionForward(float* X, const AttentionBuffers& buffers, co
     float* Q = buffers.Q;
     float* K = buffers.K;
     float* V = buffers.V;
+    float* KR = buffers.KR;
+    float* QR = buffers.QR;
+    float* KT = buffers.KT;
     float* scores = buffers.scores;
     float* W = buffers.W;
     float* Y = buffers.Y;
     float* projX = buffers.projX;
     float* projY = buffers.projY;
 
-
-    linearForward<BM, BN, BK, TM, TN>(X, qkvw, qkvb, qkv, T, 3 * N * H, C, 1);
+    
+    
+    linearForward<16, 16, 8, 4, 4>(X, qkvw, qkvb, qkv, T, 3 * N * H, C, 1);
     uint head = blockIdx.x;
     uint row = blockIdx.z;
     uint tid = threadIdx.x;
@@ -53,12 +60,36 @@ __device__ inline attentionForward(float* X, const AttentionBuffers& buffers, co
     if(tid < (H / 4) && head < N && row < T){
         
 
-        float4 qVec = reinterpret_cast<float4*>(&qkv[row * strideQKV + head * H + rowBase])[0];
-        float4 kVec = reinterpret_cast<float4*>(&qkv[row * strideQKV + N * H + head * H + rowBase])[0];
-        float4 vVec = reinterpret_cast<float4*>(&qkv[row * strideQKV + 2 * N * H + head * H + rowBase])[0];
+        reinterpret_cast<float4*>(&Q[(head * T + row) * H + rowBase])[0] = reinterpret_cast<float4*>(&qkv[row * strideQKV + head * H + rowBase])[0];
+        reinterpret_cast<float4*>(&K[(head * T + row) * H + rowBase])[0] = reinterpret_cast<float4*>(&qkv[row * strideQKV + N * H + head * H + rowBase])[0];
+        reinterpret_cast<float4*>(&V[(head * T + row) * H + rowBase])[0] = reinterpret_cast<float4*>(&qkv[row * strideQKV + 2 * N * H + head * H + rowBase])[0];
 
-        reinterpret_cast<float4*>(&Q[(head * T + row) * H + rowBase])[0] = qVec;
-        reinterpret_cast<float4*>(&V[(head * T + row) * H + rowBase])[0] = vVec;
+
+        float4 kVec = reinterpret_cast<float4*>(&K[(head * T + row) * H + rowBase])[0];
+        float4 qVec = reinterpret_cast<float4*>(&Q[(head * T + row) * H + rowBase])[0];
+
+        float thetaVal[2];
+        float cosTheta[2];
+        float sinTheta[2];
+
+        // accesses could be further optimised to reduce bank conflicts
+        reinterpret_cast<float2*>(&thetaVal)[0] = reinterpret_cast<float2*>(&buffers.theta[row * (H / 2) + tid * 2])[0];
+        cosTheta[0] = cosf(thetaVal[0]);
+        sinTheta[0] = sinf(thetaVal[0]);
+        cosTheta[1] = cosf(thetaVal[1]);
+        sinTheta[1] = sinf(thetaVal[1]);
+
+        KR[(head * T + row) * H + rowBase + 0] = kVec.x * cosTheta[0] - kVec.y * sinTheta[0];
+        KR[(head * T + row) * H + rowBase + 1] = kVec.x * sinTheta[0] + kVec.y * cosTheta[0];
+        KR[(head * T + row) * H + rowBase + 2] = kVec.z * cosTheta[1] - kVec.w * sinTheta[1];
+        KR[(head * T + row) * H + rowBase + 3] = kVec.z * sinTheta[1] + kVec.w * cosTheta[1];
+        QR[(head * T + row) * H + rowBase + 0] = qVec.x * cosTheta[0] - qVec.y * sinTheta[0];
+        QR[(head * T + row) * H + rowBase + 1] = qVec.x * sinTheta[0] + qVec.y * cosTheta[0];
+        QR[(head * T + row) * H + rowBase + 2] = qVec.z * cosTheta[1] - qVec.w * sinTheta[1];
+        QR[(head * T + row) * H + rowBase + 3] = qVec.z * sinTheta[1] + qVec.w * cosTheta[1];
+
+
+        kVec = reinterpret_cast<float4*>(&KR[(head * T + row) * H + rowBase])[0];
 
         __shared__ float Ks[H][T];
         if(rowBase < H){
@@ -71,16 +102,17 @@ __device__ inline attentionForward(float* X, const AttentionBuffers& buffers, co
         __syncthreads();
 
         if(rowBase < H){
+            #pragma unroll
             for(uint i = 0; i < 4; i++){
-                K[T * (head * H + rowBase + i) + row] = Ks[rowBase + i][row % H];
+                KT[T * (head * H + rowBase + i) + row] = Ks[rowBase + i][row % H];
             }
         }   
 
         __syncthreads();
     }
-    sgemm<BM, BN, BK, TM, TN>(K, Q, scores, rsqrtf((float)H), 0.0f, T, T, H, N);
+    sgemm<16, 16, 4, 4, 4>(KT, QR, scores, rsqrtf((float)H), 0.0f, T, T, H, N);
     softmaxForward(scores, W, T, N);
-    sgemm<BM, BN, BK, TM, TN>(V, W, Y, 1.0f, 0.0f, T, H, T, N);
+    sgemm<16, 4, 16, 2, 2>(V, W, Y, 1.0f, 0.0f, T, H, T, N);
 
     if(tid < (H / 4) && head < N && row < T){
         reinterpret_cast<float4*>(&projX[(row * N + head) * H + rowBase])[0] = 
@@ -88,7 +120,7 @@ __device__ inline attentionForward(float* X, const AttentionBuffers& buffers, co
 
         __syncthreads();
     }
-    linearForward<BM, BN, BK, TM, TN>(projX, projW, projB, projY, T, C, C, 1);
+    linearForward<16, 16, 8, 4, 4>(projX, projW, projB, projY, T, C, C, 1);
 
 }
 

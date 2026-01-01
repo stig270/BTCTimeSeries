@@ -10,8 +10,9 @@ struct ModelHyperparameters {
     int L = 4; // Number of layers
     int F = 2; // Number of classes in the classifier
     int K = 2; // Top-K experts to use in MoE
+    int B = 10000; // Base parameter for positional encoding
     float epsilon = 1e-10; // Small constant for numerical stability in division operations
-};
+}
 
 struct ModelParameters{
     float* CLS; //CLS token, [C]
@@ -43,9 +44,10 @@ struct TrainingConfig {
     int saveEvery = 200; // Save model every n steps
     int evaluateEvery = 100; // Evaluate model every n steps
     int logEvery = 10; // Log training metrics every n steps
-};
+}
 
 struct IntermediateBuffers {
+    float* theta;
     float* attnNormX;
     float* attnNorm;
     float* attnX;
@@ -53,6 +55,9 @@ struct IntermediateBuffers {
     float* Q;
     float* K;
     float* V;
+    float* QR;
+    float* KR;
+    float* KT;
     float* attnScores;
     float* attnWeights;
     float* attnY;
@@ -64,22 +69,38 @@ struct IntermediateBuffers {
     float* moeGate1;
     float* moeProbs1;
     float* moeSorted1;
-    float* moeIndices1;
+    int* moeIndices1;
+    float* moeHiddenX1;
+    float* moeW1;
+    float* moeB1;
     float* moeExperts1;
     float* moeOut1;
     float* moeHidden;
     float* moeGate2;
     float* moeProbs2;
     float* moeSorted2;
-    float* moeIndices2;
+    int* moeIndices2;
+    float* moeHiddenX2;
+    float* moeW2;
+    float* moeB2;
     float* moeExperts2;
     float* moeOut2;
+    float* decoderOut;
+    float* CLSNormX;
     float* CLSNorm;
     float* ZNormCLS;
     float* ZCLS;
+    float* Y;
+}
 
+struct BackpropagationBuffers{
+    float* dL_dZCLS;
+}
 
-
-};
-
+struct Parameter{
+    float* parameter;
+    float* gradient;
+    float* velocity;
+    float* momentum;
+}
 #endif

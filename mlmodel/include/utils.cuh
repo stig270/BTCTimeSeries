@@ -104,7 +104,7 @@ __device__ inline void sgemm_naive(float* A, float*B, float*C, float alpha, floa
     C[row * N + col] = alpha * value + beta * C[row * N + col];
 }
 
-__device__ inline void mergesort(float* X, float* Y, float* indices int T, int E){
+__device__ inline void mergesort(float* X, float* Y, int* indices int T, int E){
     
     int tid = threadIdx.x;
     int row = blockIdx.y;
@@ -152,10 +152,6 @@ __device__ inline void mergesort(float* X, float* Y, float* indices int T, int E
 
 
 }
-
-
-    
-
 
 // sort in descending order so we can iterate through k to get experts
 

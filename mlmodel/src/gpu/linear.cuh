@@ -6,18 +6,16 @@
 
 template<const uint BM, const uint BN, const uint BK, const uint TM, const uint TN>
 __device__ inline void linearForward(float* X, float* W, float* B, float* Z, int M, int N, int K, int D){
-    if(D == 1){ //basic linear case, also works for attn
-        const uint tid = threadIdx.x;
-        if(tid < M * N && blockIdx.x == 0){
-            const uint vecPerRow = N / 4;
-            const uint row = tid / vecPerRow;
-            const uint col = (tid % vecPerRow) * 4;
-            reinterpret_cast<float4*>(&Z[row * N + col])[0] = reinterpret_cast<const float4*>(&B[col])[0];
-        }
+    const uint tid = threadIdx.x;
+    const uint vecPerRow = N / 4;
+    const uint row = tid / vecPerRow;
+    const uint col = (tid % vecPerRow) * 4;
+    const uint offset = blockIdx.x * M * N;
+
+    if(tid < M * N && D = 1){
+        reinterpret_cast<float4*>(&Z[offset + row * N + col])[0] = reinterpret_cast<const float4*>(&B[offset + col])[0];
     }
-    else{// moe case
-        
-    }
+    __syncthreads();
     sgemm<BM, BN, BK, TM, TN>(X, W, Z, 1.0f, 1.0f, M, N, K, D);
    
 }
