@@ -124,4 +124,6 @@ __device__ inline void attentionForward(float* X, const AttentionBuffers& buffer
 
 }
 
+__device__ inline void attentionBackward(float* dL_dY, const AttentionBuffers& buffers, const AttentionParams& params, AttentionParams& gradients,  int C, int N, int H){
+}
 #endif

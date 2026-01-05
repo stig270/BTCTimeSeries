@@ -95,16 +95,18 @@ __device__ inline void sgemm_naive(float* A, float*B, float*C, float alpha, floa
     C += blockIdx.z * M * N;
     //enable 3d
 
-    float value = 0.0;
-    for(int i = 0; i < K; ++i){
+    if(row < M &&  col < N){
+        float value = 0.0;
+        for(int i = 0; i < K; ++i){
 
-        value += A[row * K + i] * B[i * N + col];
+            value += A[row * K + i] * B[i * N + col];
+        }
+        __syncthreads();
+        C[row * N + col] = alpha * value + beta * C[row * N + col];
     }
-    __syncthreads();
-    C[row * N + col] = alpha * value + beta * C[row * N + col];
 }
 
-__device__ inline void mergesort(float* X, float* Y, int* indices int T, int E){
+__device__ inline void mergesort(float* X, float* Y, int* indices, int T, int E){
     
     int tid = threadIdx.x;
     int row = blockIdx.y;
@@ -152,7 +154,32 @@ __device__ inline void mergesort(float* X, float* Y, int* indices int T, int E){
 
 
 }
-
 // sort in descending order so we can iterate through k to get experts
+
+
+__device__ inline void dotProduct(float* A, float* B, float*C, int D){
+    uint vecPerRow = D / 4;
+    uint tid = threadIdx.x;
+    const uint mask = (1u << vecPerRow) - 1;
+    float regA[4] = {0.0};
+    float regB[4] = {0.0};
+    float result = 0.0;
+    for(uint i = 0; i < vecPerRow; ++i){
+        reinterpret_cast<float4*>(regA)[0] = reinterpret_cast<float4*>(&A[tid * 4])[0];
+        reinterpret_cast<float4*>(regB)[0] = reinterpret_cast<float4*>(&B[i * 4])[0];
+        result += regA[0] * regB[0];
+        result += regA[1] * regB[1];
+        result += regA[2] * regB[2];
+        result += regA[3] * regB[3];
+    }
+
+    for(uint offset = vecPerRow/2 ; offset > 0; offset >>= 1){
+        result += __shfl_down_sync(mask, result, offset);
+    }
+    if(tid == 0){
+        C[tid] = result;
+    }
+}
+
 
 #endif 

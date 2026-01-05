@@ -50,6 +50,7 @@ struct IntermediateBuffers {
     float* theta;
     float* attnNormX;
     float* attnNorm;
+    float* attnRMS;
     float* attnX;
     float* qkv;
     float* Q;
@@ -65,6 +66,7 @@ struct IntermediateBuffers {
     float* projY;
     float* moeNormX;
     float* moeNorm;
+    float* moeRMS;
     float* moeX;
     float* moeGate1;
     float* moeProbs1;
@@ -74,7 +76,7 @@ struct IntermediateBuffers {
     float* moeW1;
     float* moeB1;
     float* moeExperts1;
-    float* moeOut1;
+    float* moeY1;
     float* moeHidden;
     float* moeGate2;
     float* moeProbs2;
@@ -84,17 +86,19 @@ struct IntermediateBuffers {
     float* moeW2;
     float* moeB2;
     float* moeExperts2;
-    float* moeOut2;
-    float* decoderOut;
+    float* moeY2;
+    float* decoderY;
     float* CLSNormX;
     float* CLSNorm;
+    float* CLSRMS;
     float* ZNormCLS;
     float* ZCLS;
     float* Y;
 }
 
 struct BackpropagationBuffers{
-    float* dL_dZCLS;
+    float* dL_dXNormCLS;
+    float* dL_dXCLS;
 }
 
 struct Parameter{

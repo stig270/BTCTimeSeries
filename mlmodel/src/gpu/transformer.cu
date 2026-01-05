@@ -25,9 +25,11 @@ __global__ void classifierForward(float* X, float* XNorm, float* WNorm, float* B
     simpleSoftmaxForward(Z, Y);
 }
 
-__global__ void classifierBackward(float* Y, float* P, float* dL_dZCLS, int F, float epsilon){
+__global__ void classifierBackward(float* Y, float* P, float* dL_dZCLS, float* dL_dW, float* dL_dZNormCLS, float* ZNorm,
+     float* W, float* dL_dXNorm, float* XNorm, float* WNorm, float* dL_dWNorm, float* RMS, float* dL_dX, int C, int F, float epsilon){
     BCESoftmaxBackward(Y, P, dL_dZCLS, F);
-
+    simpleLinearBackward(dL_dZCLS, dL_dW, dL_dZNormCLS, ZNorm, W, 1, F, C);
+    RMSNormBackward<1, 32, 8, 1, 4>(dL_dZNormCLS, dL_dXNorm, dL_dWNorm, dL_dX, XNorm, RMS, C, epsilon);
 }
 
 __global__ void flashAttentionForward(float* X, float* attnNorm, float* WNorm, float* BNorm, float* attnX, float* Y, const AttentionBuffers& buffers,
@@ -55,7 +57,7 @@ __global__ void flashAttentionForward(float* X, float* attnNorm, float* WNorm, f
 }
 
 
-__global__ void fusedSparsemoeForward(float* X, float* Y, float* moeNorm, float* moeHidden, float* WNorm, float* BNorm, 
+__global__ void fusedSparsemoeForward(float* X, float* Y, float* moeNorm, float* moeX, float* moeHidden, float* WNorm, float* BNorm, 
     const SparseMoeBuffers& buffers1, const SparseMoeParams& params1, const SparseMoeBuffers& buffers2,
     const SparseMoeParams& params2, int T, int C, int E, int K, float epsilon){
     RMSNormForward<16, 16, 8, 4, 4>(X, moeNorm, WNorm, BNorm, moeX, 1, C, epsilon);
@@ -149,12 +151,13 @@ void transformerForward(ModelParameters& params, const ModelHyperparameters& con
 
 
         SparseMoeBuffers moeBuffers1{
+            buffers.moeGate1[l],
             buffers.moeHiddenX1[l],
             buffers.moeProbs1[l],
             buffers.moeSorted1[l],
             buffers.moeIndices1[l],
             buffers.moeExperts1[l],
-            buffers.moeOut1[l]
+            buffers.moeY1[l]
         };
 
         SparseMoeParams moeParams1{
@@ -165,12 +168,13 @@ void transformerForward(ModelParameters& params, const ModelHyperparameters& con
         };
 
         SparseMoeBuffers moeBuffers2{
+            buffers.moeGate2[l],
             buffers.moeHiddenX2[l],
             buffers.moeProbs2[l],
             buffers.moeSorted2[l],
             buffers.moeIndices2[l],
             buffers.moeExperts2[l],
-            buffers.moeOut2[l]
+            buffers.moeY2[l]
         };
 
         SparseMoeParams moeParams2{
@@ -182,26 +186,26 @@ void transformerForward(ModelParameters& params, const ModelHyperparameters& con
         
         if(l < L - 1)
         fusedSparsemoeForward<<<moeGrid, moeBlock>>>(
-            buffers.moeNormX[l], buffers.attnNormX[l + 1] buffers.moeNorm1[l], params.WNorm[2*l + 1], params.BNorm[2*l + 1],
-            moeBuffers1, moeParams1, moeBuffers2, moeParams2, T, C, E, K, epsilon
+            buffers.moeNormX[l], buffers.attnNormX[l + 1], buffers.moeNorm1[l], buffers.moeX[l], buffers.moeHidden[l], params.WNorm[2*l + 1], params.BNorm[2*l + 1],
+             moeBuffers1, moeParams1, moeBuffers2, moeParams2, T, C, E, K, epsilon
         );
         else{
             fusedSparsemoeForward<<<moeGrid, moeBlock>>>(
-            buffers.moeNormX[l], buffers.decoderOut, buffers.moeNorm1[l], params.WNorm[2*l + 1], params.BNorm[2*l + 1],
+            buffers.moeNormX[l], buffers.decoderY, buffers.moeNorm1[l], params.WNorm[2*l + 1], params.BNorm[2*l + 1],
             moeBuffers1, moeParams1, moeBuffers2, moeParams2, T, C, E, K, epsilon
         );
         }
             
     }
 
-    // buffers.CLSNormX = buffers.decoderOut + (T - 1) * C;
+    // buffers.CLSNormX = buffers.decoderY + (T - 1) * C;
    
 
     dim3 gridDim(C, 1, 1);
     dim3 blockDim(C, 1, 1);
 
     classifierForward<<<gridDim, blockDim>>>(
-        buffers.CLSNormX, buffers.CLSNorm, params.WNorm[2*L + 1], params.BNorm[2*L + 1],
+        buffers.CLSNormX, buffers.CLSNorm, params.WNorm[2*L], params.BNorm[2*L],
         buffers.ZNormCLS, params.WCLS, params.BCLS, buffers.ZCLS, buffers.Y, C, F, epsilon
     );
     
@@ -211,7 +215,7 @@ void transformerForward(ModelParameters& params, const ModelHyperparameters& con
 
 void transformerBackward(ModelParameters& params, ModelParameters& gradients, ModelParameters& velocity, ModelParameters& momentum,
      const ModelHyperparameters& config, float learningRate, float beta1, float beta2, float weightDecay, int time,
-      IntermediateBuffers& buffers, BackpropagationBuffers& backbuffers){
+      IntermediateBuffers& buffers, BackpropagationBuffers& backbuffers, float* Y){
 
     const int C = config.C;
     const int T = config.T;
@@ -222,9 +226,20 @@ void transformerBackward(ModelParameters& params, ModelParameters& gradients, Mo
     const int F = config.F;
     const int K = config.K;
     const float epsilon = config.epsilon;
+    
 
+    dim3 gridDim(1, C, C);
+    dim3 blockDim(C, 1, 1);
+    classifierBackward<<<gridDim, blockDim>>>(
+        Y, buffers.Y, gradients.BCLS, gradients.WCLS, gradients.BNorm[2*L], buffers.ZNormCLS,
+        params.WCLS, backbuffers.dL_dXNormCLS, buffers.CLSNormX, params.WNorm[2*L],
+        gradients.WNorm[2*L], buffers.RMS[2*L], backbuffers.dL_dXCLS, C, F, epsilon
+    );
 
+    for(int l = L - 1; l >= 0; --l){
+       
 
+    }
 }
 
 

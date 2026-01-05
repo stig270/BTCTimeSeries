@@ -14,8 +14,6 @@ struct SparseMoeBuffers {
     float* W;
     float* B;
     float* experts;
-    float* expertsReshaped;
-    float* gatingWeights;
     float* Y;
 };
 
@@ -52,6 +50,7 @@ __device__ inline void sparseMoeForward(float* X, const SparseMoeBuffers& buffer
     const uint tid = 4 * threadIdx.x;
     const uint token = blockIdx.x;
     const uint row = blockIdx.y;
+    uint expertIdx;
     if(token < T && row < Cin){
         #pragma unroll
         for(int i = 0; i<K; ++i){
