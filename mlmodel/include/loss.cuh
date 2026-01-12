@@ -5,14 +5,13 @@
 #include "utils.cuh"
 #include <cuda_runtime.h>
 
-__global__ void binaryCrossEntropyLossForward(float* Y, float* P, float* loss, float sumLoss, int F, float epsilon){
+__global__ void binaryCrossEntropyLossForward(float* Y, float* P, float* loss,  int F, float epsilon){
    int tid = threadIdx.x;
    if(tid < F){
        float y = Y[tid];
        float p = P[tid];
        float l = - (y * logf(p + epsilon) + (1 - y) * logf(1 - p + epsilon));
-       loss[tid] = l;
-       atomicAdd(&sumLoss, l);
+       atomicAdd(loss, l);
    }
    
 

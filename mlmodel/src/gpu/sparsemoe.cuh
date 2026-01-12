@@ -29,19 +29,20 @@ struct SparseMoeParams {
 
 
 struct SparseMoeBackBuffers{
-    float* Xtmp1,
-    float* dL_dWtmp,
-    float* dL_dBtmp,
-    float* dE_dX,
-    float* Wtmp,
-    float* Etmp,
-    float* EMA, 
-    float* J,
-    float* dL_dG,
-    float* dG_dX,
-    float* dG_dZ,
-    float* dL_dXtmp,
-    float* dL_dXsum
+    float* Xtmp1;
+    float* dL_dWtmp;
+    float* dL_dBtmp;
+    float* dE_dX;
+    float* Wtmp;
+    float* Etmp;
+    float* EMA;
+    float* J;
+    float* dL_dG;
+    float* dG_dX;
+    float* dG_dZ;
+    float* dL_dXtmp;
+    float* dL_dXsum;
+
 };
 
 

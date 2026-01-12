@@ -20,7 +20,8 @@ struct ModelParameters{
     float* BNorm; // [2L + 1, C]
     float* qkvw; // [L, C, 3*N*H]
     float* qkvb; // [L, 3*N*H]
-    float* proj; // [L, C, C]
+    float* projW; // [L, C, C]
+    float* projB; // [L, C]
     float* moegw1; // [L, C, E]
     float* moegb1; // [L, E]
     float* moew1; // [L, E, C, C*4]
@@ -41,8 +42,9 @@ struct TrainingConfig {
     float beta1 = 0.9f; // Adam optimizer beta1
     float beta2 = 0.999f; // Adam optimizer beta2
     float initialLR = 1e-3f; // Initial learning rate
+    float lrMin = 1e-5f; // Minimum learning rate
     int warmupSteps = 100; // Learning rate warmup steps
-    int epochs = 100; // Number of training epochs
+    int epochs = 1000; // Number of training epochs
     int saveEvery = 200; // Save model every n steps
     int evaluateEvery = 100; // Evaluate model every n steps
     int logEvery = 10; // Log training metrics every n steps
@@ -83,7 +85,7 @@ struct IntermediateBuffers {
     float* moeGate2;
     float* moeProbs2;
     float* moeSorted2;
-    int* moeIndices2; // do not += (T-1)*K here
+    int* moeIndices2; // do not += (T-1)*E here
     float* moeHiddenX2;
     float* moeW2;
     float* moeB2;
@@ -95,7 +97,6 @@ struct IntermediateBuffers {
     float* CLSRMS;
     float* ZNormCLS;
     float* ZCLS;
-    float* Y;
 }
 
 struct BackpropagationBuffers{

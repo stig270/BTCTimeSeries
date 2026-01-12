@@ -5,15 +5,15 @@
 #include "config.h"
 #include <cuda_runtime.h>
 
-inline __device__ void optimizerStep(Parameter& t, float learningRate, float beta1, float beta2, float epsilon, float l2Lambda,
-    int L, int E, int C, int T, int time){
-    uint layer = blockIdx.x;
-    uint expert = blockIdx.y;
-    uint channel = blockIdx.z;
+inline __device__ void optimizerStep(Parameter& t, float learningRate, float beta1, float beta2, float epsilon, float l2Lambda, int time,
+    int D1, int D2, int D3, int V){
+    uint d1 = blockIdx.x;
+    uint d2 = blockIdx.y;
+    uint d3 = blockIdx.z;
     uint tid = threadIdx.x;
-    if(layer < L && expert < E && channel < C && tid < (T / 4)){
-        if(T%4 == 0){
-            uint idx = layer * E * C * T + expert * C * T + channel * T + tid * 4;
+    if(d1 < D1 && d2 < D2 && d3 < D3 && tid < (V / 4)){
+        if(V%4 == 0){
+            uint idx = d1 * D2 * D3 * V + d2 * D3 * V + d3 * V + tid * 4;
             float4 grad = reinterpret_cast<float4*>(t.gradient[idx])[0];
             float4 vel = reinterpret_cast<float4*>(t.velocity[idx])[0];
             float4 mom = reinterpret_cast<float4*>(t.momentum[idx])[0];
@@ -40,7 +40,7 @@ inline __device__ void optimizerStep(Parameter& t, float learningRate, float bet
             reinterpret_cast<float4*>(t.parameter[idx])[0] = param;
         }
         else{
-            uint idx = layer * E * C * T + expert * C * T + channel * T + tid;
+            uint idx = d1 * D2 * D3 * V + d2 * D3 * V + d3 * V + tid;
             t.velocity[idx] = beta1 * t.velocity[idx] + (1 - beta1) * t.gradient[idx];
             t.momentum[idx] = beta2 * t.momentum[idx] + (1 - beta2) * t.gradient[idx] * t.gradient[idx];
             t.parameter[idx] -= learningRate * t.velocity[idx] / (sqrtf(t.momentum[idx]) + epsilon) + l2Lambda * t.parameter[idx];

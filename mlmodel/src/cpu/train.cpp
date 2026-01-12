@@ -14,6 +14,7 @@ void runTrainingLoop(const ModelHyperparameters& config, const TrainingConfig& t
     const float beta1 = trainConfig.beta1;
     const float beta2 = trainConfig.beta2;
     const float initialLR = trainConfig.initialLR;
+    const float lrMin = trainConfig.lrMin;
     const int warmupSteps = trainConfig.warmupSteps;
     const int epochs = trainConfig.epochs;
     const int saveEvery = trainConfig.saveEvery;
@@ -44,17 +45,18 @@ void runTrainingLoop(const ModelHyperparameters& config, const TrainingConfig& t
 
     // init optimizer, lr scheduler
 
-    uint t = 0;
+    float learnRate = initialLR;
     auto trainingStart = std::chrono::high_resolution_clock::now();
 
-    for (int e = 0, e < epochs; e++) {
+    for (int t = 0; t < epochs; t++) {
        
         auto epochStart = std::chrono::high_resolution_clock::now();
 
+        learnRate = calculateLearnRate(initialLR, lrMin,  warmupSteps, t, epochs);
         // iterate over training examples for this
         runTransformerForward(X, Y, config, /*params*/);
 
-        computeLoss(Y, expectedOutput, loss, config);
+        computeLoss(Y, expectedOutput, loss, config.F);
 
         runTransformerBackward(X, Y, expectedOutput, config, /*params*/);
 

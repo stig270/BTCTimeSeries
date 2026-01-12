@@ -112,8 +112,8 @@ __global__ void fusedSparseMoeBackward(SparseMoeBuffers& moeBuffers2, SparseMoeP
     //load balancing
     loadBalance(loadBalance2, moeBuffers2.indices, T, E, K);
     loadBalance(loadBalance1, moeBuffers1.indices, T, C * 4, K);
-    moeBuffers2.indices += (T-1) * K;
-    moeBuffers1.indices += (T-1) * K;
+    moeBuffers2.indices += (T-1) * E;
+    moeBuffers1.indices += (T-1) * E;
     SparseMoeBackward(dL_dmoeY2, dL_dmoeHidden, moeBuffers2, moeParams2, moeGradients2, moeBackBuffers2, 4 * C, C, E, K);
     
     float regX[4];
@@ -134,6 +134,172 @@ __global__ void fusedSparseMoeBackward(SparseMoeBuffers& moeBuffers2, SparseMoeP
     RMSNormBackward<1, 16, 1, 1, 4>(dL_dBNorm, dL_dXNorm, dL_dWNorm, dL_dX, XNorm, WNorm, RMS, C, epsilon);
 }
 
+__global__ void optimizer(ModelParameters& params, ModelParameters& gradients, ModelParameters& velocity, ModelParameters& momentum,
+     const ModelHyperparameters& config, float learningRate, float beta1, float beta2, float weightDecay, int time){
+    const int C = config.C;
+    const int T = config.T;
+    const int N = config.N;
+    const int H = config.H;
+    const int E = config.E;
+    const int L = config.L;
+    const int F = config.F;
+    const int K = config.K;
+
+    Parameter CLS{
+        params.CLS,
+        gradients.CLS,
+        velocity.CLS,
+        momentum.CLS
+    }
+
+    optimizerStep(CLS, learningRate, beta1, beta2, l2Lambda, time, 1, 1, 1, C);
+
+    Parameter WNorm{
+        params.WNorm,
+        gradients.WNorm,
+        velocity.WNorm,
+        momentum.WNorm
+    }
+
+    optimizerStep(WNorm, learningRate, beta1, beta2, l2Lambda, time, L * 2 + 1, C, 1, C);
+
+    Parameter BNorm{
+        params.BNorm,
+        gradients.BNorm,
+        velocity.BNorm,
+        momentum.BNorm
+    }
+
+    optimizerStep(BNorm, learningRate, beta1, beta2, l2Lambda, time, L * 2 + 1, 1, 1, C);
+
+    Parameter qkvw{
+        params.qkvw,
+        gradients.qkvw,
+        velocity.qkvw,
+        momentum.qkvw
+    }
+    optimizerStep(qkvw, learningRate, beta1, beta2, l2Lambda, time, L, C, 1, 3 * C);
+
+    Parameter qkvb{
+        params.qkvb,
+        gradients.qkvb,
+        velocity.qkvb,
+        momentum.qkvb
+    }
+
+    optimizerStep(qkvb, learningRate, beta1, beta2, l2Lambda, time, L, 1, 1, 3 * C);
+
+    Parameter projW{
+        params.projW,
+        gradients.projW,
+        velocity.projW,
+        momentum.projW
+    }
+
+    optimizerStep(projW, learningRate, beta1, beta2, l2Lambda, time, L, C, 1, C);
+
+    Parameter projB{
+        params.projB,
+        gradients.projB,
+        velocity.projB,
+        momentum.projB
+    }
+
+    optimizerStep(projB, learningRate, beta1, beta2, l2Lambda, time, L, 1, 1, C);
+
+    Parameter moegw1{
+        params.moegw1,
+        gradients.moegw1,
+        velocity.moegw1,
+        momentum.moegw1
+    }
+
+    optimizerStep(moegw1, learningRate, beta1, beta2, l2Lambda, time, L, C, 1, E);
+
+    Parameter moegb1{
+        params.moegb1,
+        gradients.moegb1,
+        velocity.moegb1,
+        momentum.moegb1
+    }
+
+    optimizerStep(moegb1, learningRate, beta1, beta2, l2Lambda, time, L, 1, 1, E);
+
+    Parameter moew1{
+        params.moew1,
+        gradients.moew1,
+        velocity.moew1,
+        momentum.moew1
+    }
+
+    optimizerStep(moew1, learningRate, beta1, beta2, l2Lambda, time, L, E, C, C * 4);
+
+    Parameter moeb1{
+        params.moeb1,
+        gradients.moeb1,
+        velocity.moeb1,
+        momentum.moeb1
+    }
+
+    optimizerStep(moeb1, learningRate, beta1, beta2, l2Lambda, time, L, E, 1, C * 4);
+
+    Parameter moegw2{
+        params.moegw2,
+        gradients.moegw2,
+        velocity.moegw2,
+        momentum.moegw2
+    }
+
+    optimizerStep(moegw2, learningRate, beta1, beta2, l2Lambda, time, L, C * 4, 1, E);
+
+    Parameter moegb2{
+        params.moegb2,
+        gradients.moegb2,
+        velocity.moegb2,
+        momentum.moegb2
+    }
+
+    optimizerStep(moegb2, learningRate, beta1, beta2, l2Lambda, time, L, 1, 1, E);
+
+    Parameter moew2{
+        params.moew2,
+        gradients.moew2,
+        velocity.moew2,
+        momentum.moew2
+    }
+
+    optimizerStep(moew2, learningRate, beta1, beta2, l2Lambda, time, L, E, C * 4, C);
+
+    Parameter moeb2{
+        params.moeb2,
+        gradients.moeb2,
+        velocity.moeb2,
+        momentum.moeb2
+    }
+
+    optimizerStep(moeb2, learningRate, beta1, beta2, l2Lambda, time, L, E, 1, C);
+
+    Parameter WCLS{
+        params.WCLS,
+        gradients.WCLS,
+        velocity.WCLS,
+        momentum.WCLS
+    }
+
+    optimizerStep(WCLS, learningRate, beta1, beta2, l2Lambda, time, C, 1, 1, F);
+
+    Parameter BCLS{
+        params.BCLS,
+        gradients.BCLS,
+        velocity.BCLS,
+        momentum.BCLS
+    }
+
+    optimizerStep(BCLS, learningRate, beta1, beta2, l2Lambda, time, 1, 1, 1, F);
+
+}   
+
+
 void calculateThetaLauncher(float* X, float* theta, int T, int H, int B){
     dim3 gridDim(T, 1, 1);
     dim3 blockDim(H / 2, 1, 1);
@@ -141,7 +307,13 @@ void calculateThetaLauncher(float* X, float* theta, int T, int H, int B){
     calculateTheta<<<gridDim, blockDim>>>(X, theta, T, H, B);
 }
 
-void transformerForward(float* X, ModelParameters& params, const ModelHyperparameters& config, IntermediateBuffers& buffers){
+void calculateLoss(float* Y, float* P, float* loss, int F){
+    dim3 gridDim(1, 1, 1);
+    dim3 blockDim(F, 1, 1);
+
+    BCESoftmaxLoss<<<gridDim, blockDim>>>(Y, P, loss, F);
+}
+void transformerForward(float* X, float* Y, ModelParameters& params, const ModelHyperparameters& config, IntermediateBuffers& buffers){
 
     const int C = config.C;
     const int T = config.T;
@@ -257,7 +429,7 @@ void transformerForward(float* X, ModelParameters& params, const ModelHyperparam
 
     classifierForward<<<gridDim, blockDim>>>(
         buffers.CLSNormX, buffers.CLSNorm, params.WNorm[2*L], params.BNorm[2*L],
-        buffers.ZNormCLS, params.WCLS, params.BCLS, buffers.ZCLS, buffers.Y, C, F, epsilon
+        buffers.ZNormCLS, params.WCLS, params.BCLS, buffers.ZCLS, Y, C, F, epsilon
     );
     
 
@@ -265,7 +437,7 @@ void transformerForward(float* X, ModelParameters& params, const ModelHyperparam
 }
 
 void transformerBackward(ModelParameters& params, ModelParameters& gradients, ModelParameters& velocity, ModelParameters& momentum,
-     const ModelHyperparameters& config, float learningRate, float beta1, float beta2, float weightDecay, int time,
+     const ModelHyperparameters& config, float learningRate, float beta1, float beta2, float l2Lambda, int time,
       IntermediateBuffers& buffers, BackpropagationBuffers& backbuffers, TrainingConfig& trainingConfig, float* Y){
 
     const int C = config.C;
@@ -452,6 +624,10 @@ void transformerBackward(ModelParameters& params, ModelParameters& gradients, Mo
         }
 
     }
+
+    dim3 optimGrid(C, 4*C, 4*C);
+    dim3 optimBlock(4*C, 1, 1);
+    optimizer<<<optimGrid, optimBlock>>>(params, gradients, velocity, momentum, config, learningRate, beta1, beta2, l2Lambda, time);
 }
 
 
