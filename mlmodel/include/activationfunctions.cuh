@@ -1,7 +1,8 @@
-#include "utils.cuh"
-#include <cuda_runtime.h>
 #ifndef ACTIVATIONFUNCTIONS_CUH
 #define ACTIVATIONFUNCTIONS_CUH
+
+#include "utils.cuh"
+#include <cuda_runtime.h>
 
 __device__ inline void softmaxForward(float* X, float* Y, int T, int N){
     const uint tid = threadIdx.x;
@@ -54,10 +55,37 @@ __device__ inline void softmaxForward(float* X, float* Y, int T, int N){
 
 }
 
+__device__ inline void softmaxBackward(float* dL_dY, float* Y, float* J,  float* dL_dX, int T, int N){
+    
+    const uint head = blockIdx.x;
+    const uint row = blockIdx.y;
+    const uint tid = threadIdx.x;
+    const uint offset = (head * T + row) * T;
+
+    if(tid < (T / 4) && head < N && row < T){
+        float regdL_dY[4];
+        float regY[4];
+        float regdL_dX[4] = {0.0f};
+        reinterpret_cast<float4*>(regdL_dY)[0] = reinterpret_cast<float4*>(&dL_dY[offset + tid * 4])[0];
+        reinterpret_cast<float4*>(regY)[0] = reinterpret_cast<float4*>(&Y[offset + tid * 4])[0];
+        
+        dotProduct(Y, dL_dY, J, T, T, N);
+        
+        #pragma unroll
+        for(int i = 0; i < 4; ++i){
+            regdL_dX[i] = regY[i] * (regdL_dY[i] - J[(offset)]);
+        }
+
+        reinterpret_cast<float4*>(&dL_dX[offset + tid * 4])[0] = reinterpret_cast<float4*>(regdL_dX)[0];
+    }
+}
+
+
+
 __device__ inline void simpleSoftmaxForward(float* X, float* Y){
     
     const uint tid = threadIdx.x;
-    if (tid >= 2) return;
+    if (tid >= 1) return;
 
     float regX[2];
     reinterpret_cast<float2*>(regX)[0] = reinterpret_cast<const float2*>(&X)[0];

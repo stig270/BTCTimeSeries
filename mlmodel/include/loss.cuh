@@ -1,8 +1,9 @@
-#include "config.h"
-#include <cuda_runtime.h>
-
 #ifndef LOSS_CUH
 #define LOSS_CUH
+
+#include "config.h"
+#include "utils.cuh"
+#include <cuda_runtime.h>
 
 __global__ void binaryCrossEntropyLossForward(float* Y, float* P, float* loss, float sumLoss, int F, float epsilon){
    int tid = threadIdx.x;
@@ -37,7 +38,7 @@ __device__ inline void BCESoftmaxBackward(float* Y, float* P, float* dL_dZ, int 
 }
 
 
-__device__ inline void loadBalance(int* indices, float* loadBalance, float alpha, int T, int E, int K){
+__device__ inline void loadBalance(int* indices, float* loadBalance, int T, int E, int K){
     const uint token = blockIdx.x;
 
     if(token < T){
@@ -51,7 +52,7 @@ __device__ inline void loadBalance(int* indices, float* loadBalance, float alpha
 
         #pragma unroll
         for(int i = 0; i<E; ++i){
-            atomicAdd(&loadBalance[i], alpha * counts[i] / T);
+            atomicAdd(&loadBalance[i], counts[i] / T);
         }
     }
 }   

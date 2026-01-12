@@ -1,8 +1,8 @@
-#include "utils.cuh"
-#include <cuda_runtime.h>
 #ifndef LINEAR_CUH
 #define LINEAR_CUH
 
+#include "utils.cuh"
+#include <cuda_runtime.h>
 
 template<const uint BM, const uint BN, const uint BK, const uint TM, const uint TN>
 __device__ inline void linearForward(float* X, float* W, float* B, float* Z, int M, int N, int K, int D){
@@ -55,7 +55,7 @@ __device__ inline void simpleLinear(float* X, float* W, float* B, float* Z, int 
 }
 
 
-#endif
+
 
 template<const uint BM, const uint BN, const uint BK, const uint TM, const uint TN>
 __device__ inline void linearBackward(float* dL_dZ, float* dL_dW, float* dL_dX, float* X, float* W, int M, int N, int K, int D){
@@ -76,3 +76,5 @@ __device__ inline void simpleLinearBackward(float* dL_dZ, float* dL_dW, float* d
 
     sgemm_naive(dL_dZ, W, dL_dX, 1.0f, 0.0f, M, K, N, 1);
 }
+
+#endif 

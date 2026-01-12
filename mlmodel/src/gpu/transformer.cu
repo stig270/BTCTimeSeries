@@ -1,3 +1,6 @@
+#ifndef TRANSFORMER_CU
+#define TRANSFORMER_CU
+
 #include "utils.cuh"
 #include "activationfunctions.cuh"
 #include "linear.cuh"
@@ -29,7 +32,7 @@ __global__ void classifierBackward(float* Y, float* P, float* dL_dZCLS, float* d
      float* W, float* dL_dXNorm, float* XNorm, float* WNorm, float* dL_dWNorm, float* RMS, float* dL_dX, int C, int F, float epsilon){
     BCESoftmaxBackward(Y, P, dL_dZCLS, F);
     simpleLinearBackward(dL_dZCLS, dL_dW, dL_dZNormCLS, ZNorm, W, 1, F, C);
-    RMSNormBackward<1, 32, 8, 1, 4>(dL_dZNormCLS, dL_dXNorm, dL_dWNorm, dL_dX, XNorm, RMS, C, epsilon);
+    RMSNormBackward<1, 32, 1, 1, 4>(dL_dZNormCLS, dL_dXNorm, dL_dWNorm, dL_dX, XNorm, RMS, C, epsilon);
 }
 
 __global__ void flashAttentionForward(float* X, float* attnNorm, float* WNorm, float* BNorm, float* attnX, float* Y, const AttentionBuffers& buffers,
@@ -57,6 +60,13 @@ __global__ void flashAttentionForward(float* X, float* attnNorm, float* WNorm, f
 }
 
 
+__global__ void flashAttentionBackward(const AttentionBuffers& buffers, const AttentionParams& params, AttentionParams& gradients,
+    AttentionBackBuffers& backBuffers, float* dL_dAttnX, float* dL_dXNorm, float* dL_dX, float* XNorm,
+     float* AttnX, float* RMS, float* dL_dWNorm, float* WNorm, int C, int N, int H, int T, float epsilon){
+    attentionBackward(buffers, params, gradients, backBuffers, AttnX, dL_dAttnX, C, N, H, T);
+    RMSNormBackward<1, 16, 1, 1, 4>(dL_dAttnX, dL_dXNorm, dL_dWNorm, dL_dX, XNorm, WNorm, RMS, C, epsilon);
+}
+
 __global__ void fusedSparsemoeForward(float* X, float* Y, float* moeNorm, float* moeX, float* moeHidden, float* WNorm, float* BNorm, 
     const SparseMoeBuffers& buffers1, const SparseMoeParams& params1, const SparseMoeBuffers& buffers2,
     const SparseMoeParams& params2, int T, int C, int E, int K, float epsilon){
@@ -67,15 +77,15 @@ __global__ void fusedSparsemoeForward(float* X, float* Y, float* moeNorm, float*
 
     float regX[4];
     float regY[4] = {0.0f};
-    if(tid < (C / 4) && row < T){
-        reinterpret_cast<float4*>(regX)[0] = reinterpret_cast<float4*>(&X[row * C + tid * 4])[0];
+    if(tid < C && row < T){
+        reinterpret_cast<float4*>(regX)[0] = reinterpret_cast<float4*>(&X[row * C * 4 + tid * 4])[0];
         __syncthreads();
 
         #pragma unroll
         for(int i = 0; i < 4; ++i){
             regY[i] = siluForward(regX[i]);
         }
-        reinterpret_cast<float4*>(&moeHidden[row * C + tid * 4])[0] = regY;
+        reinterpret_cast<float4*>(&moeHidden[row * C * 4 + tid * 4])[0] = regY;
     }
     sparseMoeForward(moeHidden, buffers2, params2, T, C * 4, C, E, K);
 
@@ -94,6 +104,36 @@ __global__ void fusedSparsemoeForward(float* X, float* Y, float* moeNorm, float*
     }
 }
 
+__global__ void fusedSparseMoeBackward(SparseMoeBuffers& moeBuffers2, SparseMoeParams& moeParams2, SparseMoeParams& moeGradients2, SparseMoeBackBuffers& moeBackBuffers2,
+     SparseMoeBuffers& moeBuffers1, SparseMoeParams& moeParams1, SparseMoeParams& moeGradients1, SparseMoeBackBuffers& moeBackBuffers1,
+     float* dL_dmoeY2, float* dL_dmoeY1, float* dL_dmoeHidden, float* loadBalance2, float* loadBalance1, float* dL_dX,
+     float* RMS, float* dL_dWNorm, float* WNorm, float* dL_dXNorm, float* XNorm, float* dL_dBNorm, int C, int E, int K, int T, float epsilon){
+    
+    //load balancing
+    loadBalance(loadBalance2, moeBuffers2.indices, T, E, K);
+    loadBalance(loadBalance1, moeBuffers1.indices, T, C * 4, K);
+    moeBuffers2.indices += (T-1) * K;
+    moeBuffers1.indices += (T-1) * K;
+    SparseMoeBackward(dL_dmoeY2, dL_dmoeHidden, moeBuffers2, moeParams2, moeGradients2, moeBackBuffers2, 4 * C, C, E, K);
+    
+    float regX[4];
+    float regY[4];
+    float regGrad[4];
+    int tid = threadIdx.x;
+    if(tid < C){
+        reinterpret_cast<float4*>(&regY)[0] = reinterpret_cast<float4*>(&moeBuffers1.Y[tid * 4])[0];
+        reinterpret_cast<float4*>(&regGrad)[0] = reinterpret_cast<float4*>(&dL_dmoeHidden[tid * 4])[0];
+        #pragma unroll
+        for(int i = 0; i < 4; ++i){
+            regX[i] = regGrad[i] * siluBackward(regY[i]);
+        }
+        reinterpret_cast<float4*>(&dL_dmoeY1[tid * 4])[0] = reinterpret_cast<float4*>(&regX)[0];
+    }
+
+    SparseMoeBackward(dL_dmoeY1, dL_dBNorm, moeBuffers1, moeParams1, moeGradients1, moeBackBuffers1, C, C * 4, E, K);
+    RMSNormBackward<1, 16, 1, 1, 4>(dL_dBNorm, dL_dXNorm, dL_dWNorm, dL_dX, XNorm, WNorm, RMS, C, epsilon);
+}
+
 void calculateThetaLauncher(float* X, float* theta, int T, int H, int B){
     dim3 gridDim(T, 1, 1);
     dim3 blockDim(H / 2, 1, 1);
@@ -101,7 +141,7 @@ void calculateThetaLauncher(float* X, float* theta, int T, int H, int B){
     calculateTheta<<<gridDim, blockDim>>>(X, theta, T, H, B);
 }
 
-void transformerForward(ModelParameters& params, const ModelHyperparameters& config, IntermediateBuffers& buffers){
+void transformerForward(float* X, ModelParameters& params, const ModelHyperparameters& config, IntermediateBuffers& buffers){
 
     const int C = config.C;
     const int T = config.T;
@@ -113,12 +153,18 @@ void transformerForward(ModelParameters& params, const ModelHyperparameters& con
     const int K = config.K;
     const float epsilon = config.epsilon;
 
+    
+
+    dim3 attnGrid(N, C, T);
+    dim3 attnBlock(C, 1, 1);  
+
+
+
+    dim3 moeGrid(T, C, C);
+    dim3 moeBlock(C, 1, 1);
 
     for(int l = 0; l < L; ++l){
        
-
-        dim3 attnGrid(N, C, T);
-        dim3 attnBlock(C, 1, 1);  
 
         AttentionBuffers attnBuffers{
             buffers.qkv[l],
@@ -139,16 +185,21 @@ void transformerForward(ModelParameters& params, const ModelHyperparameters& con
             params.projB[l]
         };
 
-        flashAttentionForward<<<attnGrid, attnBlock>>>(
-            buffers.attnNormX[l], buffers.attnNorm[l], params.WNorm[2*l], params.BNorm[2*l],
+        if(l == 0){
+            flashAttentionForward<<<attnGrid, attnBlock>>>(
+            X, buffers.attnNorm[l], params.WNorm[2*l], params.BNorm[2*l],
             buffers.attnX[l],buffers.moeHiddenX1[l], attnBuffers, attnParams, T, C, N, H, epsilon
-        );
+        );}
+        else{
+         
+            flashAttentionForward<<<attnGrid, attnBlock>>>(
+                buffers.attnNormX[l], buffers.attnNorm[l], params.WNorm[2*l], params.BNorm[2*l],
+                buffers.attnX[l],buffers.moeHiddenX1[l], attnBuffers, attnParams, T, C, N, H, epsilon
+            );
+        }
         
       
         
-        dim3 moeGrid(T, C, C);
-        dim3 moeBlock(C, 1, 1);
-
 
         SparseMoeBuffers moeBuffers1{
             buffers.moeGate1[l],
@@ -193,7 +244,7 @@ void transformerForward(ModelParameters& params, const ModelHyperparameters& con
             fusedSparsemoeForward<<<moeGrid, moeBlock>>>(
             buffers.moeNormX[l], buffers.decoderY, buffers.moeNorm1[l], params.WNorm[2*l + 1], params.BNorm[2*l + 1],
             moeBuffers1, moeParams1, moeBuffers2, moeParams2, T, C, E, K, epsilon
-        );
+            );
         }
             
     }
@@ -215,7 +266,7 @@ void transformerForward(ModelParameters& params, const ModelHyperparameters& con
 
 void transformerBackward(ModelParameters& params, ModelParameters& gradients, ModelParameters& velocity, ModelParameters& momentum,
      const ModelHyperparameters& config, float learningRate, float beta1, float beta2, float weightDecay, int time,
-      IntermediateBuffers& buffers, BackpropagationBuffers& backbuffers, float* Y){
+      IntermediateBuffers& buffers, BackpropagationBuffers& backbuffers, TrainingConfig& trainingConfig, float* Y){
 
     const int C = config.C;
     const int T = config.T;
@@ -228,19 +279,181 @@ void transformerBackward(ModelParameters& params, ModelParameters& gradients, Mo
     const float epsilon = config.epsilon;
     
 
+
+
     dim3 gridDim(1, C, C);
     dim3 blockDim(C, 1, 1);
     classifierBackward<<<gridDim, blockDim>>>(
         Y, buffers.Y, gradients.BCLS, gradients.WCLS, gradients.BNorm[2*L], buffers.ZNormCLS,
         params.WCLS, backbuffers.dL_dXNormCLS, buffers.CLSNormX, params.WNorm[2*L],
-        gradients.WNorm[2*L], buffers.RMS[2*L], backbuffers.dL_dXCLS, C, F, epsilon
+        gradients.WNorm[2*L], buffers.RMS[2*L], backbuffers.dL_moeY[L - 1], C, F, epsilon
     );
 
+
+    dim3 moeGrid(E, 4*C, 4*C);
+    dim3 moeBlock(C, 1, 1);
+
+
+    dim3 attnGrid(N, C, T);
+    dim3 attnBlock(C, 1, 1); 
+
+
+
     for(int l = L - 1; l >= 0; --l){
-       
+
+
+        SparseMoeBuffers moeBuffers1{
+            buffers.moeGate1[l],
+            buffers.moeHiddenX1[l],
+            buffers.moeProbs1[l],
+            buffers.moeSorted1[l],
+            buffers.moeIndices1[l],
+            buffers.moeExperts1[l],
+            buffers.moeY1[l]
+        };
+
+        SparseMoeParams moeParams1{
+            params.moeW1[l],
+            params.moeB1[l],
+            params.expertW1[l],
+            params.expertB1[l]
+        };
+
+        SparseMoeParams moeGradients1{
+            gradients.moeW1[l],
+            gradients.moeB1[l],
+            gradients.expertW1[l],
+            gradients.expertB1[l]
+        };
+
+        SparseMoeBackBuffers moeBackBuffers1{
+            float* Xtmp1[l],
+            float* dL_dWtmp1[l],
+            float* dL_dBtmp1[l],
+            float* dE_dX1[l],
+            float* Wtmp1[l],
+            float* Etmp1[l],
+            float* EMA1[l], 
+            float* J1[l],
+            float* dL_dG1[l],
+            float* dG_dX1[l],
+            float* dG_dZ1[l],
+            float* dL_dXtmp1[l],
+            float* dL_dXsum1[l]
+        };
+
+        SparseMoeBuffers moeBuffers2{
+            buffers.moeGate2[l],
+            buffers.moeHiddenX2[l],
+            buffers.moeProbs2[l],
+            buffers.moeSorted2[l],
+            buffers.moeIndices2[l],
+            buffers.moeExperts2[l],
+            buffers.moeY2[l]
+        };
+
+        SparseMoeParams moeParams2{
+            params.moeW2[l],
+            params.moeB2[l],
+            params.expertW2[l],
+            params.expertB2[l]
+        };
+
+        SparseMoeParams moeGradients2{
+            gradients.moeW2[l],
+            gradients.moeB2[l],
+            gradients.expertW2[l],
+            gradients.expertB2[l]
+        };
+
+        SparseMoeBackBuffers moeBackBuffers2{
+            float* Xtmp2[l],
+            float* dL_dWtmp2[l],
+            float* dL_dBtmp2[l],
+            float* dE_dX2[l],
+            float* Wtmp2[l],
+            float* Etmp2[l],
+            float* EMA2[l], 
+            float* J2[l],
+            float* dL_dG2[l],
+            float* dG_dX2[l],
+            float* dG_dZ2[l],
+            float* dL_dXtmp2[l],
+            float* dL_dXsum2[l]
+        };
+
+        sparseMoeBackward<<<moeGrid, moeBlock>>>(
+            moeBuffers2, moeParams2, moeGradients2, moeBackBuffers2, moeBuffers1, moeParams1, moeGradients1, moeBackBuffers1,
+            backbuffers.dL_dmoeY2[l], backbuffers.dL_dmoeY1[l], backbuffers.dL_dmoeHidden[l],
+            backbuffers.loadBalance2[l], backbuffers.loadBalance1[l], backbuffers.dL_dX[l],
+             buffers.RMS[2*l + 1], gradients.WNorm[2*l + 1], params.WNorm[2*l + 1], buffers.XNorm[2*l + 1], gradients.BNorm[2*l + 1], C, E, K, T, epsilon
+        );
+         
+
+        AttentionBuffers attnBuffers{
+            buffers.qkv[l],
+            buffers.Q[l],
+            buffers.K[l],
+            buffers.V[l],
+            buffers.attnScores[l],
+            buffers.W[l],
+            buffers.attnY[l],
+            buffers.projX[l],
+            buffers.projY[l]
+        };
+
+        AttentionParams attnParams{
+            params.qkvw[l],
+            params.qkvb[l],
+            params.projW[l],
+            params.projB[l]
+        };
+
+        AttentionParams attnGradients{
+            gradients.qkvw[l],
+            gradients.qkvb[l],
+            gradients.projW[l],
+            gradients.projB[l]
+        };
+
+        AttentionBackBuffers attnBackBuffers{
+            backbuffers.dL_dProjX[l],
+            backbuffers.dL_dY[l],
+            backbuffers.dL_dW[l],
+            backbuffers.dL_dV[l],
+            backbuffers.dL_dK[l],
+            backbuffers.dL_dQ[l],
+            backbuffers.J[l],
+            backbuffers.dL_dScores[l],
+            backbuffers.dL_dKT[l],
+            backbuffers.dL_dKR[l],
+            backbuffers.dL_dQR[l],
+            backbuffers.Qw[l],
+            backbuffers.Kw[l],
+            backbuffers.Vw[l],
+            backbuffers.dL_dQCLS[l],
+            backbuffers.dL_dKCLS[l],
+            backbuffers.dL_dVCLS[l]
+        };
+
+        if(l == 0){
+            flashAttentionBackward<<<attnGrid, attnBlock>>>(
+                attnBuffers, attnParams, attnGradients, attnBackBuffers,
+                backbuffers.dL_dAttnX[l], backbuffers.dL_dXNorm[l], gradients.CLS, buffers.XNorm[2*l],
+                buffers.attnX[l], buffers.RMS[2*l], gradients.WNorm[2*l], params.WNorm[2*l], C, N, H, T, epsilon
+            );
+        }
+        else{
+            flashAttentionBackward<<<attnGrid, attnBlock>>>(
+                attnBuffers, attnParams, attnGradients, attnBackBuffers,
+                backbuffers.dL_dAttnX[l], backbuffers.dL_dXNorm[l], backbuffers.dL_dmoeY[l - 1], buffers.XNorm[2*l],
+                buffers.attnX[l], buffers.RMS[2*l], gradients.WNorm[2*l], params.WNorm[2*l], C, N, H, T, epsilon
+            );
+        }
 
     }
 }
 
 
 
+#endif

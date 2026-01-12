@@ -1,7 +1,7 @@
-#include <cuda_runtime.h>
-
 #ifndef UTILS_CUH
 #define UTILS_CUH
+
+#include <cuda_runtime.h>
 
 __device__ inline int ceildiv(int a, int b){
     return (a + b - 1) / b;
@@ -157,7 +157,8 @@ __device__ inline void mergesort(float* X, float* Y, int* indices, int T, int E)
 // sort in descending order so we can iterate through k to get experts
 
 
-__device__ inline void dotProduct(float* A, float* B, float*C, int D){
+__device__ inline void dotProduct(float* A, float* B, float*C, int D, int E, int F){
+    uint offset = blockIdx.x * E * D + blockIdx.y * D;
     uint vecPerRow = D / 4;
     uint tid = threadIdx.x;
     const uint mask = (1u << vecPerRow) - 1;
@@ -165,8 +166,8 @@ __device__ inline void dotProduct(float* A, float* B, float*C, int D){
     float regB[4] = {0.0};
     float result = 0.0;
     for(uint i = 0; i < vecPerRow; ++i){
-        reinterpret_cast<float4*>(regA)[0] = reinterpret_cast<float4*>(&A[tid * 4])[0];
-        reinterpret_cast<float4*>(regB)[0] = reinterpret_cast<float4*>(&B[i * 4])[0];
+        reinterpret_cast<float4*>(regA)[0] = reinterpret_cast<float4*>(&A[(tid + i) * 4])[0];
+        reinterpret_cast<float4*>(regB)[0] = reinterpret_cast<float4*>(&B[(tid + i) * 4])[0];
         result += regA[0] * regB[0];
         result += regA[1] * regB[1];
         result += regA[2] * regB[2];
@@ -177,7 +178,7 @@ __device__ inline void dotProduct(float* A, float* B, float*C, int D){
         result += __shfl_down_sync(mask, result, offset);
     }
     if(tid == 0){
-        C[tid] = result;
+        C[offset] = result;
     }
 }
 

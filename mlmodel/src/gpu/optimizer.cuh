@@ -1,9 +1,9 @@
+#ifndef OPTIMIZER_CUH
+#define OPTIMIZER_CUH
+
 #include "utils.cuh"
 #include "config.h"
 #include <cuda_runtime.h>
-
-#ifndef OPTIMIZER_CUH
-#define OPTIMIZER_CUH
 
 inline __device__ void optimizerStep(Parameter& t, float learningRate, float beta1, float beta2, float epsilon, float l2Lambda,
     int L, int E, int C, int T, int time){

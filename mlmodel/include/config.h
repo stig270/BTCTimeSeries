@@ -5,7 +5,7 @@ struct ModelHyperparameters {
     int T = 32; // Sequence length
     int C = 32; // Number of channels
     int N = 4; // Number of heads (attention)
-    int H = C/N; // Head size
+    int H = C/N; // Head size (8)
     int E = 4; // Number of experts (MoE)
     int L = 4; // Number of layers
     int F = 2; // Number of classes in the classifier
@@ -36,6 +36,8 @@ struct ModelParameters{
 
 struct TrainingConfig {
     float weightDecay = 1e-5f; // Weight decay for regularization
+    float alpha = 0.001f; // Moe Load balance loss alpha
+    float beta = 0.999f; // Moe EMA beta
     float beta1 = 0.9f; // Adam optimizer beta1
     float beta2 = 0.999f; // Adam optimizer beta2
     float initialLR = 1e-3f; // Initial learning rate
@@ -71,7 +73,7 @@ struct IntermediateBuffers {
     float* moeGate1;
     float* moeProbs1;
     float* moeSorted1;
-    int* moeIndices1;
+    int* moeIndices1; // do not += (T-1)*K here
     float* moeHiddenX1;
     float* moeW1;
     float* moeB1;
@@ -81,7 +83,7 @@ struct IntermediateBuffers {
     float* moeGate2;
     float* moeProbs2;
     float* moeSorted2;
-    int* moeIndices2;
+    int* moeIndices2; // do not += (T-1)*K here
     float* moeHiddenX2;
     float* moeW2;
     float* moeB2;
@@ -99,6 +101,54 @@ struct IntermediateBuffers {
 struct BackpropagationBuffers{
     float* dL_dXNormCLS;
     float* dL_dXCLS;
+    float* loadBalance2;
+    float* dL_dMoeY2;
+    float* Xtmp2;
+    float* dL_dWtmp2;
+    float* dL_dBtmp2;
+    float* dE_dX2;
+    float* Wtmp2;
+    float* Etmp2;
+    float* EMA2; // Do not zero after step
+    float* J2;
+    float* dL_dG2;
+    float* dG_dX2;
+    float* dG_dZ2;
+    float* dL_dXtmp2;
+    float* dL_dXsum2;
+    float* dL_dMoeHidden;
+    float* loadBalance1;
+    float* dL_dMoeY1;
+    float* Xtmp1;
+    float* dL_dWtmp1;
+    float* dL_dBtmp1;
+    float* dE_dX1;
+    float* Wtmp1;
+    float* Etmp1;
+    float* EMA1; // Do not zero after step
+    float* J1;
+    float* dL_dG1;
+    float* dG_dX1;
+    float* dG_dZ1;
+    float* dL_dXtmp1;
+    float* dL_dXsum1;
+    float* dL_dProjX;
+    float* dL_dY;
+    float* dL_dW;
+    float* dL_dV;
+    float* dL_dK;
+    float* dL_dQ;
+    float* J;
+    float* dL_dScores;
+    float* dL_dKT;
+    float* dL_dKR;
+    float* dL_dQR;
+    float* Qw; 
+    float* Kw; 
+    float* Vw; 
+    float* dL_dQCLS;
+    float* dL_dKCLS;
+    float* dL_dVCLS;
 }
 
 struct Parameter{

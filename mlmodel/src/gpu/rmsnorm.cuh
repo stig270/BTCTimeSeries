@@ -1,9 +1,8 @@
+#ifndef RMSNORM_CUH
+#define RMSNORM_CUH
 #include "utils.cuh"
 #include "linear.cuh"
 #include <cuda_runtime.h>
-#ifndef RMSNORM_CUH
-#define RMSNORM_CUH
-
 
 template<const uint BM, const uint BN, const uint BK, const uint TM, const uint TN>
 __device__ inline void RMSNormForward(float* X, float* XNorm, float* W, float* B, float* Z, float* RMS, int T, int C, float epsilon){
@@ -78,7 +77,8 @@ __device__ inline void RMSNormForward(float* X, float* XNorm, float* W, float* B
 }
 
 template<const uint BM, const uint BN, const uint BK, const uint TM, const uint TN>
-__device__ inline void RMSNormBackward(float* dL_dZ, float* dL_dXNorm, float* dL_dW, float* dL_dX, float* XNorm,float* W, float* RMS, int C, float epsilon){
+__device__ inline void RMSNormBackward(float* dL_dZ, float* dL_dXNorm, float* dL_dW, float* dL_dX, 
+    float* XNorm,float* W, float* RMS, int C, float epsilon){
 
     linearBackward<BM, BN, BK, TM, TN>(
         dL_dZ,
@@ -99,15 +99,15 @@ __device__ inline void RMSNormBackward(float* dL_dZ, float* dL_dXNorm, float* dL
     float regG[4];
     float regXNorm[4];
     if(tid < C / 4){
-    reinterpret_cast<float4*>(regG)[0] = reinterpret_cast<const float4*>(&dL_dXNorm[tid * 4])[0];
-    reinterpret_cast<float4*>(regXNorm)[0] = reinterpret_cast<const float4*>(&XNorm[tid * 4])[0];
-    float dL_dX[4]; 
-    #pragma unroll
-    for(int i = 0; i < 4; i ++){
-        dL_dX[i] = (regG[i] - (yg * regXNorm[i]) / C) * RMS[0];
-        
-    }
-    reinterpret_cast<float4*>(&dL_dX[tid * 4])[0] = reinterpret_cast<const float4*>(dL_dX)[0];
+        reinterpret_cast<float4*>(regG)[0] = reinterpret_cast<const float4*>(&dL_dXNorm[tid * 4])[0];
+        reinterpret_cast<float4*>(regXNorm)[0] = reinterpret_cast<const float4*>(&XNorm[tid * 4])[0];
+        float dL_dX[4]; 
+        #pragma unroll
+        for(int i = 0; i < 4; i ++){
+            dL_dX[i] = (regG[i] - (yg * regXNorm[i]) / C) * RMS[0];
+            
+        }
+        reinterpret_cast<float4*>(&dL_dX[tid * 4])[0] = reinterpret_cast<const float4*>(dL_dX)[0];
     }
 }
 #endif
