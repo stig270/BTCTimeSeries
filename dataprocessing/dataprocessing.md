@@ -1,6 +1,6 @@
 # Dataprocessing
 
-In this section,the data has been collected from APIs, from which metrics have been calculated and then the data has been normalised using a rolling z score, which has been uplodaded to a database. This can be used in the mlmodel section to train the model. We have about 10 years/4000 tokens of data collected to train the model. 
+In this section, the data has been collected from APIs, from which metrics have been calculated and then the data has been normalised using a rolling z score, which has been uplodaded to a database. This can be used in the mlmodel section to train the model. We have about 5 years/2000 tokens of data collected to train the model. 
 
 # Core Market Data
 

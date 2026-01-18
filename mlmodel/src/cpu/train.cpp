@@ -3,12 +3,18 @@
 #include <random>
 #include <chrono>
 #include <fstream>
+#include <cuda_runtime.h>
 #include "transformer.cu"
 #include "config.h"
 #include "learnratesheduler.h"
 #include "model.h"
+#include "dataprocessing.h"
 
-void runTrainingLoop(const ModelHyperparameters& config, const TrainingConfig& trainConfig, const char* modelPath){
+
+
+void runTrainingLoop(const ModelHyperparameters& config, const TrainingConfig& trainConfig, const std::string& modelPath,
+    TimeSeriesDataset& data, const std::vector<std::string>& train_timestamps, const std::vector<std::string>& val_timestamps,
+     const bool initParameters){
     
     const float weightDecay = trainConfig.weightDecay;
     const float beta1 = trainConfig.beta1;
@@ -18,72 +24,550 @@ void runTrainingLoop(const ModelHyperparameters& config, const TrainingConfig& t
     const int warmupSteps = trainConfig.warmupSteps;
     const int epochs = trainConfig.epochs;
     const int saveEvery = trainConfig.saveEvery;
-    const int evaluateEvery = trainConfig.evaluateEvery;
+    const int logEvery = trainConfig.logEvery;
 
-    //load data
+    const int T = config.T;
+    const int C = config.C;
+    const int F = config.F;
+    const int H = config.H;
+    const int L = config.L;
+    const int E = config.E;
+    const int N = config.N;
+    const int K = config.K;
+    const int B = config.B;
+    const float epsilon = config.epsilon;
 
-    // load or initialize parameters
+    std::random_device rd;
+    std::mt19937 gen(rd());
+
+    ParameterSizes parameterSizes = new ParameterSizes;
+    parameterSizes.CLS = C;
+    parameterSizes.WNorm = (2 * L + 1) * C * C;
+    parameterSizes.BNorm = (2 * L + 1) * C;
+    parameterSizes.qkvw = L * C * 3 * N * H;
+    parameterSizes.qkvb = L * 3 * N * H;
+    parameterSizes.projW = L * C * C;
+    parameterSizes.projB = L * C;
+    parameterSizes.moegw1 = L * C * E;
+    parameterSizes.moegb1 = L * E;
+    parameterSizes.moew1 = L * E * C * (C * 4);
+    parameterSizes.moeb1 = L * E * (C * 4);
+    parameterSizes.moegw2 = L * (C * 4) * E;
+    parameterSizes.moegb2 = L * E;
+    parameterSizes.moew2 = L * E * (C * 4) * C;
+    parameterSizes.moeb2 = L * E * C;
+    parameterSizes.WCLS = C * F;
+    parameterSizes.BCLS = F;
+
+    ModelParameters params = new ModelParameters;
+    ModelParameters gradients = new ModelParameters;
+    ModelParameters velocity = new ModelParameters;
+    ModelParameters momentum = new ModelParameters;
+
+    IntermediateBuffers buffers = new IntermediateBuffers;  
+    BackpropagationBuffers backbuffers = new BackpropagationBuffers;
+
+    backbuffers.Qw = params.qkvw;
+    backbuffers.Kw = params.qkvw + L * C * N * H;
+    backbuffers.Vw = params.qkvw + 2 * L * C * N * H;
+
+    HostParameters hostParameters;
+    if(initParameters){
+        hostParameters = initializeParams(parameterSizes, config);
+
+    }
+    else{
+        hostParameters = loadParams(parameterSizes, config, modelPath);
+    }
 
     float* X;
+    float* P;
     float* Y;
-    float* expectedOutput;
     float* loss;
 
-    size_t XSize = config.T * config.C * sizeof(float); 
-    size_t YSize = config.F * sizeof(float);
-    size_t expectedOutputSize = config.F * sizeof(float);
+    size_t XSize = T * C * sizeof(float); 
+    size_t PSize = F * sizeof(float);
+    size_t YSize = F * sizeof(float);
     size_t lossSize = sizeof(float);
 
     cudaMalloc(&X, XSize);
+    cudaMalloc(&P, PSize);
     cudaMalloc(&Y, YSize);
-    cudaMalloc(&expectedOutput, expectedOutputSize);
     cudaMalloc(&loss, lossSize);
 
     std::vector<float> XHost(XSize);
-    std::vector<float> expectedOutputHost(expectedOutputSize);
+    std::vector<float> PHost(PSize);
+    std::vector<float> YHost(YSize);
     float lossHost; 
 
-    // init optimizer, lr scheduler
 
-    float learnRate = initialLR;
+
+
+    params.CLS = X + (T - 1) * C;
+    cudaMalloc(&params.CLS, parameterSizes.CLS * sizeof(float));
+    cudaMemcpy(params.CLS, hostParameters.CLS.data(), parameterSizes.CLS * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc(&gradients.CLS, parameterSizes.CLS * sizeof(float));
+    cudaMalloc(&velocity.CLS, parameterSizes.CLS * sizeof(float));
+    cudaMalloc(&momentum.CLS, parameterSizes.CLS * sizeof(float));
+
+    cudaMalloc(&params.WNorm, parameterSizes.WNorm * sizeof(float));
+    cudaMemcpy(params.WNorm, hostParameters.WNorm.data(), parameterSizes.WNorm * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc(&gradients.WNorm, parameterSizes.WNorm * sizeof(float));
+    cudaMalloc(&velocity.WNorm, parameterSizes.WNorm * sizeof(float));
+    cudaMalloc(&momentum.WNorm, parameterSizes.WNorm * sizeof(float));
+
+    cudaMalloc(&params.BNorm, parameterSizes.BNorm * sizeof(float));
+    cudaMemcpy(params.BNorm, hostParameters.BNorm.data(), parameterSizes.BNorm * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc(&gradients.BNorm, parameterSizes.BNorm * sizeof(float));
+    cudaMalloc(&velocity.BNorm, parameterSizes.BNorm * sizeof(float));
+    cudaMalloc(&momentum.BNorm, parameterSizes.BNorm * sizeof(float));
+
+    cudaMalloc(&params.qkvw, parameterSizes.qkvw * sizeof(float));
+    cudaMemcpy(params.qkvw, hostParameters.qkvw.data(), parameterSizes.qkvw * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc(&gradients.qkvw, parameterSizes.qkvw * sizeof(float));
+    cudaMalloc(&velocity.qkvw, parameterSizes.qkvw * sizeof(float));
+    cudaMalloc(&momentum.qkvw, parameterSizes.qkvw * sizeof(float));
+
+    cudaMalloc(&params.qkvb, parameterSizes.qkvb * sizeof(float));
+    cudaMemcpy(params.qkvb, hostParameters.qkvb.data(), parameterSizes.qkvb * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc(&gradients.qkvb, parameterSizes.qkvb * sizeof(float));
+    cudaMalloc(&velocity.qkvb, parameterSizes.qkvb * sizeof(float));
+    cudaMalloc(&momentum.qkvb, parameterSizes.qkvb * sizeof(float));
+
+    cudaMalloc(&params.projW, parameterSizes.projW * sizeof(float));
+    cudaMemcpy(params.projW, hostParameters.projW.data(), parameterSizes.projW * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc(&gradients.projW, parameterSizes.projW * sizeof(float));
+    cudaMalloc(&velocity.projW, parameterSizes.projW * sizeof(float));
+    cudaMalloc(&momentum.projW, parameterSizes.projW * sizeof(float));
+
+    cudaMalloc(&params.projB, parameterSizes.projB * sizeof(float));
+    cudaMemcpy(params.projB, hostParameters.projB.data(), parameterSizes.projB * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc(&gradients.projB, parameterSizes.projB * sizeof(float));
+    cudaMalloc(&velocity.projB, parameterSizes.projB * sizeof(float));
+    cudaMalloc(&momentum.projB, parameterSizes.projB * sizeof(float));
+
+    cudaMalloc(&params.moegw1, parameterSizes.moegw1 * sizeof(float));
+    cudaMemcpy(params.moegw1, hostParameters.moegw1.data(), parameterSizes.moegw1 * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc(&gradients.moegw1, parameterSizes.moegw1 * sizeof(float));
+    cudaMalloc(&velocity.moegw1, parameterSizes.moegw1 * sizeof(float));
+    cudaMalloc(&momentum.moegw1, parameterSizes.moegw1 * sizeof(float));
+
+    cudaMalloc(&params.moegb1, parameterSizes.moegb1 * sizeof(float));
+    cudaMemcpy(params.moegb1, hostParameters.moegb1.data(), parameterSizes.moegb1 * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc(&gradients.moegb1, parameterSizes.moegb1 * sizeof(float));
+    cudaMalloc(&velocity.moegb1, parameterSizes.moegb1 * sizeof(float));
+    cudaMalloc(&momentum.moegb1, parameterSizes.moegb1 * sizeof(float));
+
+    cudaMalloc(&params.moew1, parameterSizes.moew1 * sizeof(float));
+    cudaMemcpy(params.moew1, hostParameters.moew1.data(), parameterSizes.moew1 * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc(&gradients.moew1, parameterSizes.moew1 * sizeof(float));
+    cudaMalloc(&velocity.moew1, parameterSizes.moew1 * sizeof(float));
+    cudaMalloc(&momentum.moew1, parameterSizes.moew1 * sizeof(float));
+
+    cudaMalloc(&params.moeb1, parameterSizes.moeb1 * sizeof(float));
+    cudaMemcpy(params.moeb1, hostParameters.moeb1.data(), parameterSizes.moeb1 * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc(&gradients.moeb1, parameterSizes.moeb1 * sizeof(float));
+    cudaMalloc(&velocity.moeb1, parameterSizes.moeb1 * sizeof(float));
+    cudaMalloc(&momentum.moeb1, parameterSizes.moeb1 * sizeof(float));
+
+    cudaMalloc(&params.moegw2, parameterSizes.moegw2 * sizeof(float));
+    cudaMemcpy(params.moegw2, hostParameters.moegw2.data(), parameterSizes.moegw2 * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc(&gradients.moegw2, parameterSizes.moegw2 * sizeof(float));
+    cudaMalloc(&velocity.moegw2, parameterSizes.moegw2 * sizeof(float));
+    cudaMalloc(&momentum.moegw2, parameterSizes.moegw2 * sizeof(float));
+
+    cudaMalloc(&params.moegb2, parameterSizes.moegb2 * sizeof(float));
+    cudaMemcpy(params.moegb2, hostParameters.moegb2.data(), parameterSizes.moegb2 * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc(&gradients.moegb2, parameterSizes.moegb2 * sizeof(float));
+    cudaMalloc(&velocity.moegb2, parameterSizes.moegb2 * sizeof(float));
+    cudaMalloc(&momentum.moegb2, parameterSizes.moegb2 * sizeof(float));
+
+    cudaMalloc(&params.moew2, parameterSizes.moew2 * sizeof(float));
+    cudaMemcpy(params.moew2, hostParameters.moew2.data(), parameterSizes.moew2 * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc(&gradients.moew2, parameterSizes.moew2 * sizeof(float));
+    cudaMalloc(&velocity.moew2, parameterSizes.moew2 * sizeof(float));
+    cudaMalloc(&momentum.moew2, parameterSizes.moew2 * sizeof(float));
+
+    cudaMalloc(&params.moeb2, parameterSizes.moeb2 * sizeof(float));
+    cudaMemcpy(params.moeb2, hostParameters.moeb2.data(), parameterSizes.moeb2 * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc(&gradients.moeb2, parameterSizes.moeb2 * sizeof(float));
+    cudaMalloc(&velocity.moeb2, parameterSizes.moeb2 * sizeof(float));
+    cudaMalloc(&momentum.moeb2, parameterSizes.moeb2 * sizeof(float));
+
+    cudaMalloc(&params.WCLS, parameterSizes.WCLS * sizeof(float));
+    cudaMemcpy(params.WCLS, hostParameters.WCLS.data(), parameterSizes.WCLS * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc(&gradients.WCLS, parameterSizes.WCLS * sizeof(float));
+    cudaMalloc(&velocity.WCLS, parameterSizes.WCLS * sizeof(float));
+    cudaMalloc(&momentum.WCLS, parameterSizes.WCLS * sizeof(float));
+
+    cudaMalloc(&params.BCLS, parameterSizes.BCLS * sizeof(float));
+    cudaMemcpy(params.BCLS, hostParameters.BCLS.data(), parameterSizes.BCLS * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc(&gradients.BCLS, parameterSizes.BCLS * sizeof(float));
+    cudaMalloc(&velocity.BCLS, parameterSizes.BCLS * sizeof(float));
+    cudaMalloc(&momentum.BCLS, parameterSizes.BCLS * sizeof(float));
+
+    cudaMalloc(&buffers.theta, T * C * sizeof(float));
+    cudaMalloc(&buffers.attnNormX, L * T * C * sizeof(float));
+    cudaMalloc(&buffers.attnNorm, L * T * C * sizeof(float));
+    cudaMalloc(&buffers.attnRMS, L * sizeof(float));
+    cudaMalloc(&buffers.qkv, L * 3 * N * H * T * sizeof(float));
+    cudaMalloc(&buffers.Q, L * N * H * T * sizeof(float));
+    cudaMalloc(&buffers.K, L * N * H * T * sizeof(float));
+    cudaMalloc(&buffers.V, L * N * H * T * sizeof(float));
+    cudaMalloc(&buffers.QR, L * N * H * T * sizeof(float));
+    cudaMalloc(&buffers.KR, L * N * H * T * sizeof(float));
+    cudaMalloc(&buffers.KT, L * N * H * T * sizeof(float));
+    cudaMalloc(&buffers.attnScores, L * N * H * T * T * sizeof(float));
+    cudaMalloc(&buffers.attnWeights, L * N * H * T * T * sizeof(float));
+    cudaMalloc(&buffers.attnY, L * T * C * sizeof(float));
+    cudaMalloc(&buffers.projX, L * T * C * sizeof(float));
+    cudaMalloc(&buffers.projY, L * T * C * sizeof(float));
+    cudaMalloc(&buffers.moeGate1, L * T * E * sizeof(float));
+    cudaMalloc(&buffers.moeProbs1, L * T * E * sizeof(float));
+    cudaMalloc(&buffers.moeSorted1, L * T * E * sizeof(float));
+    cudaMalloc(&buffers.moeIndices1, L * T * E * sizeof(int));
+    cudaMalloc(&buffers.moeW1, L * K * C * C * 4 *sizeof(float));
+    cudaMalloc(&buffers.moeB1, L * K * C * 4 * sizeof(float));
+    cudaMalloc(&buffers.moeExperts1, L * K * C * 4  * sizeof(float));
+    cudaMalloc(&buffers.moeY1, L * T * C * 4 * sizeof(float));
+    cudaMalloc(&buffers.moeHidden1, L * T * C * 4 * sizeof(float));
+    cudaMalloc(&buffers.moeGate2, L * T * E * sizeof(float));
+    cudaMalloc(&buffers.moeProbs2, L * T * E * sizeof(float));
+    cudaMalloc(&buffers.moeSorted2, L * T * E * sizeof(float));
+    cudaMalloc(&buffers.moeIndices2, L * T * E * sizeof(int));
+    cudaMalloc(&buffers.moeW2, L * K * C * 4 * C * sizeof(float));
+    cudaMalloc(&buffers.moeB2, L * K * C * sizeof(float));
+    cudaMalloc(&buffers.moeExperts2, L * K * C * sizeof(float));
+    cudaMalloc(&buffers.moeY2, L * T * C * sizeof(float));
+    cudaMalloc(&buffers.decoderY, T * C * sizeof(float));
+    cudaMalloc(&buffers.CLSNorm, C * sizeof(float));
+    cudaMalloc(&buffers.ZNormCLS, C * sizeof(float));
+    cudaMalloc(&buffers.ZCLS, F * sizeof(float));    
+
+    cudaMalloc(&backbuffers.dL_dXNormCLS, C * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dXCLS, C * sizeof(float));
+    cudaMalloc(&backbuffers.loadBalance2, L * E * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dMoeY2, L * C * sizeof(float));
+    cudaMalloc(&backbuffers.Xtmp2, L * K * C * 4 * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dWtmp2, L * K * C * 4 * C * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dBtmp2, L * K * C * sizeof(float));
+    cudaMalloc(&backbuffers.dE_dX2, L * T * C * 4 * sizeof(float));
+    cudaMalloc(&backbuffers.Wtmp2, L * K * C * 4 * C * sizeof(float));
+    cudaMalloc(&backbuffers.Etmp2, L * K * C * sizeof(float));
+    cudaMalloc(&backbuffers.EMA2, L * E * C * sizeof(float));
+    cudaMalloc(&backbuffers.J2, L * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dG2, L * E * sizeof(float));
+    cudaMalloc(&backbuffers.dG_dX2, L * 4 * C * sizeof(float));
+    cudaMalloc(&backbuffers.dG_dZ2, L * E * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dXtmp2, L * K * C * 4 * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dXsum2, L * C * 4 * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dMoeHidden1, L * C * 4 * sizeof(float));
+    cudaMalloc(&backbuffers.loadBalance1, L * E * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dMoeY1, L * T * C * 4 * sizeof(float));
+    cudaMalloc(&backbuffers.Xtmp1, L * T * C * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dWtmp1, L * K * C * C * 4 * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dBtmp1, L * K * C * 4 * sizeof(float));
+    cudaMalloc(&backbuffers.dE_dX1, L * T * C * sizeof(float));
+    cudaMalloc(&backbuffers.Wtmp1, L * K * C * C * 4 * sizeof(float));
+    cudaMalloc(&backbuffers.Etmp1, L * K * C * 4 * sizeof(float));
+    cudaMalloc(&backbuffers.EMA1, L * E * C * 4 * sizeof(float));
+    cudaMalloc(&backbuffers.J1, L * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dG1, L * E * sizeof(float));
+    cudaMalloc(&backbuffers.dG_dX1, L * C * sizeof(float));
+    cudaMalloc(&backbuffers.dG_dZ1, L * E * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dXtmp1, L * K * C * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dXsum1, L * C * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dProjX, L * T * C * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dY, L * T * C * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dW, L * N * T * T * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dK, L * N * H * T * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dQ, L * N * H * T * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dV, L * N * H * T * sizeof(float));
+    cudaMalloc(&backbuffers.J, L * N * T * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dScores, L * N * T * T * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dKT, L * N * H * T * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dQR, L * N * H * T * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dKR, L * N * H * T * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dQCLS, L * C * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dKCLS, L * C * sizeof(float));
+    cudaMalloc(&backbuffers.dL_dVCLS, L * C * sizeof(float));
+
+
+
+
+    uint t = 0;
+    float learnRate;
+    calculateThetaLauncher(buffers.theta, T, H, B);
+
     auto trainingStart = std::chrono::high_resolution_clock::now();
 
-    for (int t = 0; t < epochs; t++) {
+    for (uint e = 0; e < epochs; e++) {
        
         auto epochStart = std::chrono::high_resolution_clock::now();
+        std::vector<std::string> shuffled_timestamps = train_timestamps;
+        std::shuffle(shuffled_timestamps.begin(), shuffled_timestamps.end(), gen);
+        float trainAccuracy = 0.0f;
+        float valAccuracy = 0.0f;
 
-        learnRate = calculateLearnRate(initialLR, lrMin,  warmupSteps, t, epochs);
-        // iterate over training examples for this
-        runTransformerForward(X, Y, config, /*params*/);
+        for(size_t i = 0; i < shuffled_timestamps.size(); i++){
+            const std::string& timestamp = shuffled_timestamps[i];
+            std::vector<std::vector<float>> window = data.getWindow(timestamp, T);
+            float label = data.getLabel(timestamp, T);
 
-        computeLoss(Y, expectedOutput, loss, config.F);
+            for(uint j = 0; j < T - 1; j++){
+                for(int c = 0; c < C; c++){
+                    XHost[j * C + c] = window[j][c];
+                },
+            }
 
-        runTransformerBackward(X, Y, expectedOutput, config, /*params*/);
 
+            for(int f = 0; f < F; f++){
+                YHost[f] = (f == static_cast<int>(label)) ? 1.0f : 0.0f;
+            }
 
+            cudaMemcpy(X, XHost.data(), XSize, cudaMemcpyHostToDevice);
+            cudaMemcpy(Y, YHost.data(), YSize, cudaMemcpyHostToDevice);
+
+            
+            learnRate = calculateLearnRate(initialLR, lrMin,  warmupSteps, t, epochs * shuffled_timestamps.size());
+            transformerForward(X, P, params, config, buffers);
+            transformerBackward(params, gradients, velocity, momentum, config, learnRate, beta1, beta2, weightDecay, t,
+                buffers, backbuffers, Y, P);
         
+            cudaMemcpy(&PHost, P, PSize, cudaMemcpyDeviceToHost); 
+            if(fmaxf(PHost[0], PHost[1]) == label){
+                trainAccuracy += 1.0f;
+            }
 
-        if (t % logEvery == 0) {
-            cudaMemcpy(&lossHost, loss, lossSize, cudaMemcpyDeviceToHost);
-            std::cout << "Step " << t << ", Loss: " << lossHost << std::endl;
+            if (t % logEvery == 0) {
+                calculateLoss(P, Y, loss, F);
+                cudaMemcpy(&lossHost, loss, lossSize, cudaMemcpyDeviceToHost);
+                std::cout << "Step " << t << ", Loss: " << lossHost << std::endl;
+            }
+
+            if (t % saveEvery == 0) {
+                cudaMemcpy(hostParameters.CLS.data(), params.CLS, parameterSizes.CLS * sizeof(float), cudaMemcpyDeviceToHost);
+                cudaMemcpy(hostParameters.WNorm.data(), params.WNorm, parameterSizes.WNorm * sizeof(float), cudaMemcpyDeviceToHost);
+                cudaMemcpy(hostParameters.BNorm.data(), params.BNorm, parameterSizes.BNorm * sizeof(float), cudaMemcpyDeviceToHost);
+                cudaMemcpy(hostParameters.qkvw.data(), params.qkvw, parameterSizes.qkvw * sizeof(float), cudaMemcpyDeviceToHost);
+                cudaMemcpy(hostParameters.qkvb.data(), params.qkvb, parameterSizes.qkvb * sizeof(float), cudaMemcpyDeviceToHost);
+                cudaMemcpy(hostParameters.projW.data(), params.projW, parameterSizes.projW * sizeof(float), cudaMemcpyDeviceToHost);
+                cudaMemcpy(hostParameters.projB.data(), params.projB, parameterSizes.projB * sizeof(float), cudaMemcpyDeviceToHost);
+                cudaMemcpy(hostParameters.moegw1.data(), params.moegw1, parameterSizes.moegw1 * sizeof(float), cudaMemcpyDeviceToHost);
+                cudaMemcpy(hostParameters.moegb1.data(), params.moegb1, parameterSizes.moegb1 * sizeof(float), cudaMemcpyDeviceToHost);
+                cudaMemcpy(hostParameters.moew1.data(), params.moew1, parameterSizes.moew1 * sizeof(float), cudaMemcpyDeviceToHost);
+                cudaMemcpy(hostParameters.moeb1.data(), params.moeb1, parameterSizes.moeb1 * sizeof(float), cudaMemcpyDeviceToHost);
+                cudaMemcpy(hostParameters.moegw2.data(), params.moegw2, parameterSizes.moegw2 * sizeof(float), cudaMemcpyDeviceToHost);
+                cudaMemcpy(hostParameters.moegb2.data(), params.moegb2, parameterSizes.moegb2 * sizeof(float), cudaMemcpyDeviceToHost);
+                cudaMemcpy(hostParameters.moew2.data(), params.moew2, parameterSizes.moew2 * sizeof(float), cudaMemcpyDeviceToHost);
+                cudaMemcpy(hostParameters.moeb2.data(), params.moeb2, parameterSizes.moeb2 * sizeof(float), cudaMemcpyDeviceToHost);
+                cudaMemcpy(hostParameters.WCLS.data(), params.WCLS, parameterSizes.WCLS * sizeof(float), cudaMemcpyDeviceToHost);
+                cudaMemcpy(hostParameters.BCLS.data(), params.BCLS, parameterSizes.BCLS * sizeof(float), cudaMemcpyDeviceToHost);
+
+                saveParams(parameterSizes, hostParameters, config, modelPath);
+            }
+
+            t++;
         }
 
-        if (t % saveEvery == 0) {
-            // save model parameters
-        }
+        trainAccuracy /= shuffled_timestamps.size();
+        std::cout << "Training Accuracy: " << trainAccuracy << std::endl;
 
-        if (t % evaluateEvery == 0) {
-            // evaluate on validation set
-        }
+        shuffled_timestamps = val_timestamps;
+        std::shuffle(shuffled_timestamps.begin(), shuffled_timestamps.end(), gen);
+        for(size_t i = 0; i < shuffled_timestamps.size(); i++){
 
-        t++;
-    }   
+            const std::string& timestamp = shuffled_timestamps[i];
+            std::vector<std::vector<float>> window = data.getWindow(timestamp, T);
+            float label = data.getLabel(timestamp, T);
 
+            for(int j = 0; j < T - 1; j++){
+                for(int c = 0; c < C; c++){
+                    XHost[j * C + c] = window[j][c];
+                },
+            }
 
+            cudaMemcpy(X, XHost.data(), XSize, cudaMemcpyHostToDevice);
+            transformerForward(X, P, params, config, buffers);
+            cudaMemcpy(&PHost, P, PSize, cudaMemcpyDeviceToHost);
 
+            if(fmaxf(PHost[0], PHost[1]) == label){
+                valAccuracy += 1.0f;
+            }
+    
 
+        }   
 
+        valAccuracy /= shuffled_timestamps.size();
+        std::cout << "Validation Accuracy: " << valAccuracy << std::endl;
 
+        auto epochEnd = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> epochDuration = epochEnd - epochStart;
+        std::cout << "Epoch " << e << " completed in " << epochDuration << std::endl;
 
+    }
 }
+
+cudaFree(X);
+cudaFree(P);
+cudaFree(Y);
+cudaFree(loss);
+
+cudaFree(params.CLS);
+cudaFree(params.WNorm);
+cudaFree(params.BNorm);
+cudaFree(params.qkvw);
+cudaFree(params.qkvb);
+cudaFree(params.projW);
+cudaFree(params.projB);
+cudaFree(params.moegw1);
+cudaFree(params.moegb1);
+cudaFree(params.moew1);
+cudaFree(params.moeb1);
+cudaFree(params.moegw2);
+cudaFree(params.moegb2);
+cudaFree(params.moew2);
+cudaFree(params.moeb2);
+cudaFree(params.WCLS);
+cudaFree(params.BCLS);
+
+cudaFree(gradients.CLS);
+cudaFree(gradients.WNorm);
+cudaFree(gradients.BNorm);
+cudaFree(gradients.qkvw);
+cudaFree(gradients.qkvb);
+cudaFree(gradients.projW);
+cudaFree(gradients.projB);
+cudaFree(gradients.moegw1);
+cudaFree(gradients.moegb1);
+cudaFree(gradients.moew1);
+cudaFree(gradients.moeb1);
+cudaFree(gradients.moegw2);
+cudaFree(gradients.moegb2);
+cudaFree(gradients.moew2);
+cudaFree(gradients.moeb2);
+cudaFree(gradients.WCLS);
+cudaFree(gradients.BCLS);
+
+cudaFree(velocity.CLS);
+cudaFree(velocity.WNorm);
+cudaFree(velocity.BNorm);
+cudaFree(velocity.qkvw);
+cudaFree(velocity.qkvb);
+cudaFree(velocity.projW);
+cudaFree(velocity.projB);
+cudaFree(velocity.moegw1);
+cudaFree(velocity.moegb1);
+cudaFree(velocity.moew1);
+cudaFree(velocity.moeb1);
+cudaFree(velocity.moegw2);
+cudaFree(velocity.moegb2);
+cudaFree(velocity.moew2);
+cudaFree(velocity.moeb2);
+cudaFree(velocity.WCLS);
+cudaFree(velocity.BCLS);
+
+cudaFree(momentum.CLS);
+cudaFree(momentum.WNorm);
+cudaFree(momentum.BNorm);
+cudaFree(momentum.qkvw);
+cudaFree(momentum.qkvb);
+cudaFree(momentum.projW);
+cudaFree(momentum.projB);
+cudaFree(momentum.moegw1);
+cudaFree(momentum.moegb1);
+cudaFree(momentum.moew1);
+cudaFree(momentum.moeb1);
+cudaFree(momentum.moegw2);
+cudaFree(momentum.moegb2);
+cudaFree(momentum.moew2);
+cudaFree(momentum.moeb2);
+cudaFree(momentum.WCLS);
+cudaFree(momentum.BCLS);
+
+cudaFree(buffers.theta);
+cudaFree(buffers.attnNormX);
+cudaFree(buffers.attnNorm);
+cudaFree(buffers.attnRMS);
+cudaFree(buffers.qkv);
+cudaFree(buffers.Q);
+cudaFree(buffers.K);
+cudaFree(buffers.V);
+cudaFree(buffers.QR);
+cudaFree(buffers.KR);
+cudaFree(buffers.KT);
+cudaFree(buffers.attnScores);
+cudaFree(buffers.attnWeights);
+cudaFree(buffers.attnY);
+cudaFree(buffers.projX);
+cudaFree(buffers.projY);
+cudaFree(buffers.moeGate1);
+cudaFree(buffers.moeProbs1);
+cudaFree(buffers.moeSorted1);
+cudaFree(buffers.moeIndices1);
+cudaFree(buffers.moeW1);
+cudaFree(buffers.moeB1);
+cudaFree(buffers.moeExperts1);
+cudaFree(buffers.moeY1);
+cudaFree(buffers.moeHidden1);
+cudaFree(buffers.moeGate2);
+cudaFree(buffers.moeProbs2);
+cudaFree(buffers.moeSorted2);
+cudaFree(buffers.moeIndices2);
+cudaFree(buffers.moeW2);
+cudaFree(buffers.moeB2);
+cudaFree(buffers.moeExperts2);
+cudaFree(buffers.moeY2);
+cudaFree(buffers.decoderY);
+cudaFree(buffers.CLSNorm);
+cudaFree(buffers.ZNormCLS);
+cudaFree(buffers.ZCLS);
+
+cudaFree(backbuffers.dL_dXNormCLS);
+cudaFree(backbuffers.dL_dXCLS);
+cudaFree(backbuffers.loadBalance2);
+cudaFree(backbuffers.dL_dMoeY2);
+cudaFree(backbuffers.Xtmp2);
+cudaFree(backbuffers.dL_dWtmp2);
+cudaFree(backbuffers.dL_dBtmp2);
+cudaFree(backbuffers.dE_dX2);
+cudaFree(backbuffers.Wtmp2);
+cudaFree(backbuffers.Etmp2);
+cudaFree(backbuffers.EMA2);
+cudaFree(backbuffers.J2);
+cudaFree(backbuffers.dL_dG2);
+cudaFree(backbuffers.dG_dX2);
+cudaFree(backbuffers.dG_dZ2);
+cudaFree(backbuffers.dL_dXtmp2);
+cudaFree(backbuffers.dL_dXsum2);
+cudaFree(backbuffers.dL_dMoeHidden1);
+cudaFree(backbuffers.loadBalance1);
+cudaFree(backbuffers.dL_dMoeY1);
+cudaFree(backbuffers.Xtmp1);
+cudaFree(backbuffers.dL_dWtmp1);
+cudaFree(backbuffers.dL_dBtmp1);
+cudaFree(backbuffers.dE_dX1);
+cudaFree(backbuffers.Wtmp1);
+cudaFree(backbuffers.Etmp1);
+cudaFree(backbuffers.EMA1);
+cudaFree(backbuffers.J1);
+cudaFree(backbuffers.dL_dG1);
+cudaFree(backbuffers.dG_dX1);
+cudaFree(backbuffers.dG_dZ1);
+cudaFree(backbuffers.dL_dXtmp1);
+cudaFree(backbuffers.dL_dXsum1);
+cudaFree(backbuffers.dL_dProjX);
+cudaFree(backbuffers.dL_dY);
+cudaFree(backbuffers.dL_dW);
+cudaFree(backbuffers.dL_dK);
+cudaFree(backbuffers.dL_dQ);
+cudaFree(backbuffers.dL_dV);
+cudaFree(backbuffers.J);
+cudaFree(backbuffers.dL_dScores);
+cudaFree(backbuffers.dL_dKT);
+cudaFree(backbuffers.dL_dQR);
+cudaFree(backbuffers.dL_dKR);
+cudaFree(backbuffers.dL_dQCLS);
+cudaFree(backbuffers.dL_dKCLS);
+cudaFree(backbuffers.dL_dVCLS);
 

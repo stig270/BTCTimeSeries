@@ -34,6 +34,45 @@ struct ModelParameters{
     float* BCLS; // [F]
 }
 
+struct HostParameters{
+    std::vector<float> CLS; //CLS token, [C]
+    std::vector<float> WNorm; // [2L + 1, C, C]
+    std::vector<float> BNorm; // [2L + 1, C]
+    std::vector<float> qkvw; // [L, C, 3*N*H]
+    std::vector<float> qkvb; // [L, 3*N*H]
+    std::vector<float> projW; // [L, C, C]
+    std::vector<float> projB; // [L, C]
+    std::vector<float> moegw1; // [L, C, E]
+    std::vector<float> moegb1; // [L, E]
+    std::vector<float> moew1; // [L, E, C, C*4]
+    std::vector<float> moeb1; // [L, E, C*4]
+    std::vector<float> moegw2; // [L, C*4, E]
+    std::vector<float> moegb2; // [L, E]
+    std::vector<float> moew2; // [L, E, C*4, C]
+    std::vector<float> moeb2; // [L, E, C]
+    std::vector<float> WCLS; // [C, F]
+    std::vector<float> BCLS; // [F]
+}
+
+struct ParameterSizes{
+    size_t CLS; //CLS token, [C]
+    size_t WNorm; // [2L + 1, C, C]
+    size_t BNorm; // [2L + 1, C]
+    size_t qkvw; // [L, C, 3*N*H]
+    size_t qkvb; // [L, 3*N*H]
+    size_t projW; // [L, C, C]
+    size_t projB; // [L, C]
+    size_t moegw1; // [L, C, E]
+    size_t moegb1; // [L, E]
+    size_t moew1; // [L, E, C, C*4]
+    size_t moeb1; // [L, E, C*4]
+    size_t moegw2; // [L, C*4, E]
+    size_t moegb2; // [L, E]
+    size_t moew2; // [L, E, C*4, C]
+    size_t moeb2; // [L, E, C]
+    size_t WCLS; // [C, F]
+    size_t BCLS; // [F]
+}
 
 struct TrainingConfig {
     float weightDecay = 1e-5f; // Weight decay for regularization
@@ -46,7 +85,6 @@ struct TrainingConfig {
     int warmupSteps = 100; // Learning rate warmup steps
     int epochs = 1000; // Number of training epochs
     int saveEvery = 200; // Save model every n steps
-    int evaluateEvery = 100; // Evaluate model every n steps
     int logEvery = 10; // Log training metrics every n steps
 }
 
@@ -75,8 +113,7 @@ struct IntermediateBuffers {
     float* moeGate1;
     float* moeProbs1;
     float* moeSorted1;
-    int* moeIndices1; // do not += (T-1)*K here
-    float* moeHiddenX1;
+    int* moeIndices1; // do not += (T-1)*E here
     float* moeW1;
     float* moeB1;
     float* moeExperts1;
@@ -86,15 +123,12 @@ struct IntermediateBuffers {
     float* moeProbs2;
     float* moeSorted2;
     int* moeIndices2; // do not += (T-1)*E here
-    float* moeHiddenX2;
     float* moeW2;
     float* moeB2;
     float* moeExperts2;
     float* moeY2;
     float* decoderY;
-    float* CLSNormX;
     float* CLSNorm;
-    float* CLSRMS;
     float* ZNormCLS;
     float* ZCLS;
 }

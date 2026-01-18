@@ -7,7 +7,7 @@
 void runTrainingLoop(const ModelHyperparameters& config, const TrainingConfig& trainConfig, const char* modelPath);
 void runInference(const ModelParameters& params, const ModelConfig& config);
 void saveParams(const ModelParameters& params, const ModelConfig& config, const char* path)
-ModelParameters loadParams(ModelParameters& params, const ModelConfig& config, const char* path);
-ModelParameters initializeParams(ModelParameters& params, const ModelConfig& config);
+void loadParams(ModelParameters& params, const ModelConfig& config, const char* path);
+void initializeParams(ModelParameters& params, const ModelConfig& config);
 
 #endif

@@ -46,7 +46,9 @@ __device__ inline void RMSNormForward(float* X, float* XNorm, float* W, float* B
 
         rms = __shfl_sync(mask, rms, 0);
 
-        RMS[row] = rms;
+        if(row = T-1){
+            RMS[row] = rms;
+        }
 
         #pragma unroll
         for(uint i = 0; i < 4; i ++){

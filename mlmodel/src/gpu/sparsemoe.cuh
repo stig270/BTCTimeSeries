@@ -13,7 +13,6 @@ struct SparseMoeBuffers {
     float* probs;
     float* sorted;
     int* indices;
-    float* X;
     float* W;
     float* B;
     float* experts;
@@ -76,10 +75,10 @@ __device__ inline void sparseMoeForward(float* X, const SparseMoeBuffers& buffer
         for(int i = 0; i<K; ++i){
             expertIdx = indices[token * E + i];
 
-            reinterpret_cast<float4*>(W[token * Cin * K * Cout + row * K * Cout + i * Cout + tid])[0] = reinterpret_cast<float4*>(&W[expertIdx * Cin * Cout + row * Cout + tid])[0];
-            reinterpret_cast<float4*>(B[token * K * Cout + i * Cout * tid])[0] = reinterpret_cast<float4*>(&B[expertIdx * Cout + tid])[0];
-            reinterpret_cast<float4*>(experts[token * K * Cout + i * Cout * tid])[0] = reinterpret_cast<float4*>(&B[token * K * Cout + i * Cout * tid])[0];
-        } // double check this when GPU available 
+            reinterpret_cast<float4*>(&W[token * Cin * K * Cout + row * K * Cout + i * Cout + tid])[0] = reinterpret_cast<float4*>(&w[expertIdx * Cin * Cout + row * Cout + tid])[0];
+            reinterpret_cast<float4*>(&B[token * K * Cout + i * Cout + tid])[0] = reinterpret_cast<float4*>(&b[expertIdx * Cout + tid])[0];
+            reinterpret_cast<float4*>(&experts[token * K * Cout + i * Cout + tid])[0] = reinterpret_cast<float4*>(&b[token * K * Cout + i * Cout + tid])[0];
+        } 
     }
 
     linearForward<1, 32, 32, 1, 2>(X, W, B, experts,  1,  K * Cout, Cin, T);
@@ -122,14 +121,14 @@ __device__ inline void sparseMoeBackward(float* dL_dY, float* dL_dX, float* X, c
 
     
     if(expert < K && tid < Cout/4){
-        float gradY[4] = 0.0f;
-        float gradB[4] = 0.0f;
+        float gradY[4] = {0.0f};
+        float gradB[4] = {0.0f};
         float gy = buffers.probs[expert];
 
         reinterpret_cast<float4*>(gradY)[0] = reinterpret_cast<float4*>(&dL_dY[4 * tid])[0];
 
         #pragma unroll
-        for(int i = 0; i < 4; ++i){
+        for(uint i = 0; i < 4; ++i){
             gradB[i] = gradY[i] * gy;
         }
 
@@ -155,7 +154,7 @@ __device__ inline void sparseMoeBackward(float* dL_dY, float* dL_dX, float* X, c
         reinterpret_cast<float4*>(&expEma)[0] = reinterpret_cast<float4*>(&backBuffers.Etmp[expertIdx * Cout + 4 * tid])[0];
 
         #pragma unroll
-        for(int i = 0; i < 4; ++i){
+        for(uint i = 0; i < 4; ++i){
             ema[i] = beta * ema[i] + (1 - beta) * expEma[i];
         }
         reinterpret_cast<float4*>(&backBuffers.EMA[expertIdx * Cout + 4 * tid])[0] = reinterpret_cast<float4*>(&ema)[0];
@@ -170,12 +169,12 @@ __device__ inline void sparseMoeBackward(float* dL_dY, float* dL_dX, float* X, c
     sgemm<16, 4, 1, 4, 2>(gradients.gw, X, gradients.gb, 1.0f, 0.0f, Cin, E, 1, 1);
 
     if(expert == 0 && tid < E/4){
-        float gb[4] = 0.0f;
-        float lb[4] = 0.0f;
+        float gb[4] = {0.0f};
+        float lb[4] = {0.0f};
         reinterpret_cast<float4*>(&gb)[0] = reinterpret_cast<float4*>(&gradients.gb[4 * tid])[0];
         reinterpret_cast<float4*>(&lb)[0] = reinterpret_cast<float4*>(&loadBalance[4 * tid])[0];
         #pragma unroll
-        for(int i = 0; i < 4; ++i){
+        for(uint i = 0; i < 4; ++i){
             gb[i] += lb[i] * alpha;
         }
 
@@ -183,16 +182,16 @@ __device__ inline void sparseMoeBackward(float* dL_dY, float* dL_dX, float* X, c
         float gate[4] = 0.0f;
         float dG_dZ[K] = 0.0f;
         reinterpret_cast<float4*>(&gate)[0] = reinterpret_cast<float4*>(&buffers.probs[4 * tid])[0];
-        for(int i = 0; i < K; ++i){
+        for(uint i = 0; i < K; ++i){
             dG_dZ[i] = gate[i] * (1 - gate[i]);
         }
 
     }
     
     if(expert < K && tid < Cin/4){
-        float gw[4] = 0.0f;
+        float gw[4] = {0.0f};
         reinterpret_cast<float4*>(&gw)[0] = reinterpret_cast<float4*>(&params.gw[expertIdx * E + 4 * tid])[0];
-        for(int i = 0; i < 4; ++i){
+        for(uint i = 0; i < 4; ++i){
             gw[i] /= dG_dZ[expert];
         }
         reinterpret_cast<float4*>(&backBuffers.dG_dX[expert * Cin + 4 * tid])[0] = reinterpret_cast<float4*>(&gw)[0];
@@ -208,9 +207,9 @@ __device__ inline void sparseMoeBackward(float* dL_dY, float* dL_dX, float* X, c
 
     if(tid < Cin/4){
         float regdL_dXsum[4] = reinterpret_cast<float4*>(&dL_dXsum[4 * tid])[0];
-        float regdL_dX[4] = 0.0f;
+        float regdL_dX[4] = {0.0f};
 
-        for(int i = 0; i<K; ++i){
+        for(uint i = 0; i<K; ++i){
             float regdL_dXtmp[4] = reinterpret_cast<float4*>(&backBuffers.dL_dXtmp[i * Cin + 4 * tid])[0];
             float regdE_dX[4] = reinterpret_cast<float4*>(&backBuffers.dE_dX[i * Cin + 4 * tid])[0];
 

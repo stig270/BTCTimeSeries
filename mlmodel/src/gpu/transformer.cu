@@ -15,15 +15,15 @@
 #define ceildiv(a, b) ((a + b - 1) / b)
 
 
-__global__ void calculateTheta(float* X, float* theta, int T, int H, int B){
+__global__ void calculateTheta(float* theta, int T, int H, int B){
     int token = blockIdx.x;
     int tid = threadIdx.x;
     if(token > T && tid > H / 2) return;
     theta[token * H/2 + tid] = token * powf(B,  2 * (float)tid / H);
 }
 
-__global__ void classifierForward(float* X, float* XNorm, float* WNorm, float* BNorm, float* ZNorm, float* W, float* B, float* Z, float* Y, int C, int F, float epsilon){
-    RMSNormForward<1, 32, 8, 1, 4>(X, XNorm, WNorm, BNorm, ZNorm, 1, C, epsilon);
+__global__ void classifierForward(float* X, float* XNorm, float* WNorm, float* BNorm, float* ZNorm, float* W, float* B, float* Z, float* Y, float* RMS, int C, int F, float epsilon){
+    RMSNormForward<1, 32, 8, 1, 4>(X, XNorm, WNorm, BNorm, ZNorm, RMS, 1, C, epsilon);
     simpleLinear(ZNorm, W, B, Z, 1, F, C); // optimised sgemm is overkill for what is essentially 2 dot products
     simpleSoftmaxForward(Z, Y);
 }
@@ -109,7 +109,6 @@ __global__ void fusedSparseMoeBackward(SparseMoeBuffers& moeBuffers2, SparseMoeP
      float* dL_dmoeY2, float* dL_dmoeY1, float* dL_dmoeHidden, float* loadBalance2, float* loadBalance1, float* dL_dX,
      float* RMS, float* dL_dWNorm, float* WNorm, float* dL_dXNorm, float* XNorm, float* dL_dBNorm, int C, int E, int K, int T, float epsilon){
     
-    //load balancing
     loadBalance(loadBalance2, moeBuffers2.indices, T, E, K);
     loadBalance(loadBalance1, moeBuffers1.indices, T, C * 4, K);
     moeBuffers2.indices += (T-1) * E;
@@ -300,11 +299,11 @@ __global__ void optimizer(ModelParameters& params, ModelParameters& gradients, M
 }   
 
 
-void calculateThetaLauncher(float* X, float* theta, int T, int H, int B){
+void calculateThetaLauncher(float* theta, int T, int H, int B){
     dim3 gridDim(T, 1, 1);
     dim3 blockDim(H / 2, 1, 1);
 
-    calculateTheta<<<gridDim, blockDim>>>(X, theta, T, H, B);
+    calculateTheta<<<gridDim, blockDim>>>(theta, T, H, B);
 }
 
 void calculateLoss(float* Y, float* P, float* loss, int F){
@@ -339,34 +338,34 @@ void transformerForward(float* X, float* Y, ModelParameters& params, const Model
        
 
         AttentionBuffers attnBuffers{
-            buffers.qkv[l],
-            buffers.Q[l],
-            buffers.K[l],
-            buffers.V[l],
-            buffers.attnScores[l],
-            buffers.W[l],
-            buffers.attnY[l],
-            buffers.projX[l],
-            buffers.projY[l]
+            buffers.qkv + l * N * T * H * 3,
+            buffers.Q + l * N * T * H,
+            buffers.K + l * N * T * H,
+            buffers.V + l * N * T * H,
+            buffers.attnScores + l * N * T * T,
+            buffers.W + l * N * T * H,
+            buffers.attnY + l * N * T * H,
+            buffers.projX+ l * T * C,
+            buffers.projY + l * T * C
         };
 
         AttentionParams attnParams{
-            params.qkvw[l],
-            params.qkvb[l],
-            params.projW[l],
-            params.projB[l]
+            params.qkvw + l * C * 3 * C,
+            params.qkvb + l * 3 * C,
+            params.projW + l * C * C,
+            params.projB + l * C
         };
 
         if(l == 0){
             flashAttentionForward<<<attnGrid, attnBlock>>>(
-            X, buffers.attnNorm[l], params.WNorm[2*l], params.BNorm[2*l],
-            buffers.attnX[l],buffers.moeHiddenX1[l], attnBuffers, attnParams, T, C, N, H, epsilon
+            X, buffers.attnNorm + l * T * C, params.WNorm + 2*l * C * C, params.BNorm + 2*l * C,
+            buffers.attnX + l * T * C, buffers.moeHiddenX1 + l * T * C, attnBuffers, attnParams, T, C, N, H, epsilon
         );}
         else{
          
             flashAttentionForward<<<attnGrid, attnBlock>>>(
-                buffers.attnNormX[l], buffers.attnNorm[l], params.WNorm[2*l], params.BNorm[2*l],
-                buffers.attnX[l],buffers.moeHiddenX1[l], attnBuffers, attnParams, T, C, N, H, epsilon
+                buffers.attnNormX + (l - 1) * T * C, buffers.attnNorm + l * T * C, params.WNorm + 2*l * C * C, params.BNorm + 2*l * C,
+                buffers.attnX + l * T * C, buffers.moeHiddenX1 + l * T * C, attnBuffers, attnParams, T, C, N, H, epsilon
             );
         }
         
@@ -374,62 +373,62 @@ void transformerForward(float* X, float* Y, ModelParameters& params, const Model
         
 
         SparseMoeBuffers moeBuffers1{
-            buffers.moeGate1[l],
-            buffers.moeHiddenX1[l],
-            buffers.moeProbs1[l],
-            buffers.moeSorted1[l],
-            buffers.moeIndices1[l],
-            buffers.moeExperts1[l],
-            buffers.moeY1[l]
+            buffers.moeGate1 + l * T * E,
+            buffers.moeProbs1 + l * T * E,
+            buffers.moeSorted1 + l * T * E,
+            buffers.moeIndices1 + l * T * E,
+            buffers.moeW1 + l * K * T * C * C * 4,
+            buffers.moeB1 + l * K * T * C * 4,
+            buffers.moeExperts1 + l * T * K * C * 4,
+            buffers.moeY1 + l * T * C * 4
         };
 
         SparseMoeParams moeParams1{
-            params.moeW1[l],
-            params.moeB1[l],
-            params.expertW1[l],
-            params.expertB1[l]
+            params.moegw1 + l * C * E,
+            params.moeb1 + l * E,
+            params.moew1 + l * E * C * C * 4,
+            params.moeb1 + l * E * C * 4
         };
 
         SparseMoeBuffers moeBuffers2{
-            buffers.moeGate2[l],
-            buffers.moeHiddenX2[l],
-            buffers.moeProbs2[l],
-            buffers.moeSorted2[l],
-            buffers.moeIndices2[l],
-            buffers.moeExperts2[l],
-            buffers.moeY2[l]
+            buffers.moeGate2 + l * T * E,
+            buffers.moeProbs2 + l * T * E,
+            buffers.moeSorted2 + l * T * E,
+            buffers.moeIndices2 + l * T * E,
+            buffers.moeW2 + l * K * T * C * C * 4,
+            buffers.moeB2 + l * K * T * C,
+            buffers.moeExperts2 + l * T * K * C,
+            buffers.moeY2 + l * T * C 
         };
 
         SparseMoeParams moeParams2{
-            params.moeW2[l],
-            params.moeB2[l],
-            params.expertW2[l],
-            params.expertB2[l]
+            params.moegw2 + l * C * 4 * E,
+            params.moeb2 + l * E,
+            params.moew2 + l * E * C * 4 * C,
+            params.moeb2 + l * E * C
         };
         
         if(l < L - 1)
         fusedSparsemoeForward<<<moeGrid, moeBlock>>>(
-            buffers.moeNormX[l], buffers.attnNormX[l + 1], buffers.moeNorm1[l], buffers.moeX[l], buffers.moeHidden[l], params.WNorm[2*l + 1], params.BNorm[2*l + 1],
+            buffers.moeNormX + l * T * C, buffers.attnNormX + l * T * C, buffers.moeNorm1 + l * T * C, buffers.moeX + l * T * C, buffers.moeHidden + l * T * C * 4, params.WNorm + (2*l + 1) * C * C, params.BNorm + (2*l + 1) * C,
              moeBuffers1, moeParams1, moeBuffers2, moeParams2, T, C, E, K, epsilon
         );
         else{
             fusedSparsemoeForward<<<moeGrid, moeBlock>>>(
-            buffers.moeNormX[l], buffers.decoderY, buffers.moeNorm1[l], params.WNorm[2*l + 1], params.BNorm[2*l + 1],
+            buffers.moeNormX + l * T * C, buffers.decoderY, buffers.moeNorm1 + l * T * C, buffers.moeX + l * T * C, buffers.moeHidden + l * T * C * 4, params.WNorm + (2*l + 1) * C * C, params.BNorm + (2*l + 1) * C,
             moeBuffers1, moeParams1, moeBuffers2, moeParams2, T, C, E, K, epsilon
             );
         }
             
     }
-
-    // buffers.CLSNormX = buffers.decoderY + (T - 1) * C;
    
 
     dim3 gridDim(C, 1, 1);
     dim3 blockDim(C, 1, 1);
 
     classifierForward<<<gridDim, blockDim>>>(
-        buffers.CLSNormX, buffers.CLSNorm, params.WNorm[2*L], params.BNorm[2*L],
-        buffers.ZNormCLS, params.WCLS, params.BCLS, buffers.ZCLS, Y, C, F, epsilon
+        buffers.decoderY + (T - 1) * C, buffers.CLSNorm, params.WNorm + 2*L * C * C, params.BNorm + 2*L * C,
+        buffers.ZNormCLS, params.WCLS, params.BCLS, buffers.ZCLS, Y, buffers.RMS + 2*L, C, F, epsilon
     );
     
 
@@ -438,7 +437,7 @@ void transformerForward(float* X, float* Y, ModelParameters& params, const Model
 
 void transformerBackward(ModelParameters& params, ModelParameters& gradients, ModelParameters& velocity, ModelParameters& momentum,
      const ModelHyperparameters& config, float learningRate, float beta1, float beta2, float l2Lambda, int time,
-      IntermediateBuffers& buffers, BackpropagationBuffers& backbuffers, TrainingConfig& trainingConfig, float* Y){
+      IntermediateBuffers& buffers, BackpropagationBuffers& backbuffers, float* Y, float* P){
 
     const int C = config.C;
     const int T = config.T;
@@ -456,9 +455,9 @@ void transformerBackward(ModelParameters& params, ModelParameters& gradients, Mo
     dim3 gridDim(1, C, C);
     dim3 blockDim(C, 1, 1);
     classifierBackward<<<gridDim, blockDim>>>(
-        Y, buffers.Y, gradients.BCLS, gradients.WCLS, gradients.BNorm[2*L], buffers.ZNormCLS,
-        params.WCLS, backbuffers.dL_dXNormCLS, buffers.CLSNormX, params.WNorm[2*L],
-        gradients.WNorm[2*L], buffers.RMS[2*L], backbuffers.dL_moeY[L - 1], C, F, epsilon
+        Y, P, gradients.BCLS, gradients.WCLS, gradients.BNorm + 2*L * C, buffers.ZNormCLS,
+        params.WCLS, backbuffers.dL_dXNormCLS, buffers.decoderY + (T - 1) * C, params.WNorm + 2*L * C * C,
+        gradients.WNorm + 2*L * C * C, buffers.RMS + 2*L, backbuffers.dL_moeY[L - 1], C, F, epsilon
     );
 
 
@@ -475,151 +474,153 @@ void transformerBackward(ModelParameters& params, ModelParameters& gradients, Mo
 
 
         SparseMoeBuffers moeBuffers1{
-            buffers.moeGate1[l],
-            buffers.moeHiddenX1[l],
-            buffers.moeProbs1[l],
-            buffers.moeSorted1[l],
-            buffers.moeIndices1[l],
-            buffers.moeExperts1[l],
-            buffers.moeY1[l]
+            buffers.moeGate1 + l * (T - 1) * E,
+            buffers.moeProbs1 + l * (T - 1) * E,
+            buffers.moeSorted1 + l * (T - 1) * E,
+            buffers.moeIndices1 + l * (T - 1) * E,
+            buffers.moeW1 + l * K * (T - 1) * C * C * 4,
+            buffers.moeB1 + l * K * (T - 1) * C * 4,
+            buffers.moeExperts1 + l * (T - 1) * K * C * 4,
+            buffers.moeY1 + l * (T - 1) * C * 4
         };
 
         SparseMoeParams moeParams1{
-            params.moeW1[l],
-            params.moeB1[l],
-            params.expertW1[l],
-            params.expertB1[l]
+            params.moegw1 + l * C * E,
+            params.moeb1 + l * E,
+            params.moew1 + l * E * C * C * 4,
+            params.moeb1 + l * E * C * 4
         };
 
         SparseMoeParams moeGradients1{
-            gradients.moeW1[l],
-            gradients.moeB1[l],
-            gradients.expertW1[l],
-            gradients.expertB1[l]
+            gradients.moeW1 + l * C * E,
+            gradients.moeB1 + l * E,
+            gradients.expertW1 + l * E * C * C * 4,
+            gradients.expertB1 + l * E * C * 4
         };
 
         SparseMoeBackBuffers moeBackBuffers1{
-            float* Xtmp1[l],
-            float* dL_dWtmp1[l],
-            float* dL_dBtmp1[l],
-            float* dE_dX1[l],
-            float* Wtmp1[l],
-            float* Etmp1[l],
-            float* EMA1[l], 
-            float* J1[l],
-            float* dL_dG1[l],
-            float* dG_dX1[l],
-            float* dG_dZ1[l],
-            float* dL_dXtmp1[l],
-            float* dL_dXsum1[l]
+            float* Xtmp1 + l * K * C,
+            float* dL_dWtmp1 + l * K * C * C * 4,
+            float* dL_dBtmp1 + l * K * C * 4,
+            float* dE_dX1 + l * K * C,
+            float* Wtmp1 + l * K * C * C * 4,
+            float* Etmp1 + l * K * C * 4,
+            float* EMA1 + l * E * C * 4, 
+            float* J1 + l,
+            float* dL_dG1 + l * E,
+            float* dG_dX1 + l * K * C,
+            float* dG_dZ1 + l * E,
+            float* dL_dXtmp1 + l * K * C * 4,
+            float* dL_dXsum1 + l * C
         };
 
         SparseMoeBuffers moeBuffers2{
-            buffers.moeGate2[l],
-            buffers.moeHiddenX2[l],
-            buffers.moeProbs2[l],
-            buffers.moeSorted2[l],
-            buffers.moeIndices2[l],
-            buffers.moeExperts2[l],
-            buffers.moeY2[l]
+            buffers.moeGate2 + l * (T - 1) * E,
+            buffers.moeProbs2 + l * (T - 1) * E,
+            buffers.moeSorted2 + l * (T - 1) * E,
+            buffers.moeIndices2 + l * (T - 1) * E,
+            buffers.moeW2 + l * K * (T - 1) * C * C * 4,
+            buffers.moeB2 + l * K * (T - 1) * C,
+            buffers.moeExperts2 + l * (T - 1) * K * C,
+            buffers.moeY2 + l * (T - 1) * C 
         };
 
         SparseMoeParams moeParams2{
-            params.moeW2[l],
-            params.moeB2[l],
-            params.expertW2[l],
-            params.expertB2[l]
+            params.moegw2 + l * C * 4 * E,
+            params.moeb2 + l * E,
+            params.moew2 + l * E * C * 4 * C,
+            params.moeb2 + l * E * C
         };
 
         SparseMoeParams moeGradients2{
-            gradients.moeW2[l],
-            gradients.moeB2[l],
-            gradients.expertW2[l],
-            gradients.expertB2[l]
+            gradients.moeW2 + l * C * 4 * E,
+            gradients.moeB2 + l * E,
+            gradients.expertW2 + l * E * C * 4 * C,
+            gradients.expertB2 + l * E * C
         };
 
         SparseMoeBackBuffers moeBackBuffers2{
-            float* Xtmp2[l],
-            float* dL_dWtmp2[l],
-            float* dL_dBtmp2[l],
-            float* dE_dX2[l],
-            float* Wtmp2[l],
-            float* Etmp2[l],
-            float* EMA2[l], 
-            float* J2[l],
-            float* dL_dG2[l],
-            float* dG_dX2[l],
-            float* dG_dZ2[l],
-            float* dL_dXtmp2[l],
-            float* dL_dXsum2[l]
+            float* Xtmp2 + l * C * 4,
+            float* dL_dWtmp2 + l * K * C * 4 * C,
+            float* dL_dBtmp2 + l * K * C,
+            float* dE_dX2 + l * K * C * 4,
+            float* Wtmp2 + l * K * C * 4 * C,
+            float* Etmp2 + l * K * C,
+            float* EMA2 + l * C, 
+            float* J2 + l,
+            float* dL_dG2 + l * E,
+            float* dG_dX2 + l * K * C * 4,
+            float* dG_dZ2 + l * E,
+            float* dL_dXtmp2 + l * K * C * 4,
+            float* dL_dXsum2 + l * C * 4
         };
 
-        sparseMoeBackward<<<moeGrid, moeBlock>>>(
+        fusedSparseMoeBackward<<<moeGrid, moeBlock>>>(
             moeBuffers2, moeParams2, moeGradients2, moeBackBuffers2, moeBuffers1, moeParams1, moeGradients1, moeBackBuffers1,
-            backbuffers.dL_dmoeY2[l], backbuffers.dL_dmoeY1[l], backbuffers.dL_dmoeHidden[l],
-            backbuffers.loadBalance2[l], backbuffers.loadBalance1[l], backbuffers.dL_dX[l],
-             buffers.RMS[2*l + 1], gradients.WNorm[2*l + 1], params.WNorm[2*l + 1], buffers.XNorm[2*l + 1], gradients.BNorm[2*l + 1], C, E, K, T, epsilon
+            backbuffers.dL_dmoeY2 + l * C, backbuffers.dL_dmoeY1 + l * C * 4, backbuffers.dL_dmoeHidden + l * C * 4,
+            backbuffers.loadBalance2 + l * E, backbuffers.loadBalance1 + l * E, gradients.projB + l * C,
+             buffers.RMS + 2*l + 1, gradients.WNorm + (2* l + 1) * C * C, params.WNorm + (2* l + 1) * C * C, buffers.XNorm + (2*l + 1) * C, gradients.BNorm + (2*l + 1) * C, C, E, K, T, epsilon
         );
          
 
-        AttentionBuffers attnBuffers{
-            buffers.qkv[l],
-            buffers.Q[l],
-            buffers.K[l],
-            buffers.V[l],
-            buffers.attnScores[l],
-            buffers.W[l],
-            buffers.attnY[l],
-            buffers.projX[l],
-            buffers.projY[l]
+         AttentionBuffers attnBuffers{
+            buffers.qkv + l * N * T * H * 3,
+            buffers.Q + l * N * T * H,
+            buffers.K + l * N * T * H,
+            buffers.V + l * N * T * H,
+            buffers.attnScores + l * N * T * T,
+            buffers.W + l * N * T * H,
+            buffers.attnY + l * N * T * H,
+            buffers.projX+ l * T * C,
+            buffers.projY + l * T * C
         };
 
-        AttentionParams attnParams{
-            params.qkvw[l],
-            params.qkvb[l],
-            params.projW[l],
-            params.projB[l]
+         AttentionParams attnParams{
+            params.qkvw + l * C * 3 * C,
+            params.qkvb + l * 3 * C,
+            params.projW + l * C * C,
+            params.projB + l * C
         };
 
         AttentionParams attnGradients{
-            gradients.qkvw[l],
-            gradients.qkvb[l],
-            gradients.projW[l],
-            gradients.projB[l]
+            gradients.qkvw + l * C * 3 * C,
+            gradients.qkvb + l * 3 * C,
+            gradients.projW + l * C * C,
+            gradients.projB + l * C
         };
 
         AttentionBackBuffers attnBackBuffers{
-            backbuffers.dL_dProjX[l],
-            backbuffers.dL_dY[l],
-            backbuffers.dL_dW[l],
-            backbuffers.dL_dV[l],
-            backbuffers.dL_dK[l],
-            backbuffers.dL_dQ[l],
-            backbuffers.J[l],
-            backbuffers.dL_dScores[l],
-            backbuffers.dL_dKT[l],
-            backbuffers.dL_dKR[l],
-            backbuffers.dL_dQR[l],
-            backbuffers.Qw[l],
-            backbuffers.Kw[l],
-            backbuffers.Vw[l],
-            backbuffers.dL_dQCLS[l],
-            backbuffers.dL_dKCLS[l],
-            backbuffers.dL_dVCLS[l]
+            backbuffers.dL_dProjX + l * T * C,
+            backbuffers.dL_dY + l * N * T * T,
+            backbuffers.dL_dW + l * N * T * T,
+            backbuffers.dL_dV + l * N * T * H,
+            backbuffers.dL_dK + l * N * T * H,
+            backbuffers.dL_dQ + l * N * T * H,
+            backbuffers.J + l * N * T,
+            backbuffers.dL_dScores + l * N * T * T,
+            backbuffers.dL_dKT + l * N * T * H,
+            backbuffers.dL_dKR + l * N * T * H,
+            backbuffers.dL_dQR + l * N * T * H,
+            backbuffers.Qw + l * 3 * N * C * H,
+            backbuffers.Kw + l * 3 * N * C * H,
+            backbuffers.Vw + l * 3 * N * C * H,
+            backbuffers.dL_dQCLS + l * C,
+            backbuffers.dL_dKCLS + l * C,
+            backbuffers.dL_dVCLS + l * C
         };
 
         if(l == 0){
             flashAttentionBackward<<<attnGrid, attnBlock>>>(
                 attnBuffers, attnParams, attnGradients, attnBackBuffers,
-                backbuffers.dL_dAttnX[l], backbuffers.dL_dXNorm[l], gradients.CLS, buffers.XNorm[2*l],
-                buffers.attnX[l], buffers.RMS[2*l], gradients.WNorm[2*l], params.WNorm[2*l], C, N, H, T, epsilon
+                gradients.BNorm + 2*l * C, backbuffers.dL_dXNorm + l * C, gradients.CLS, buffers.XNorm + 2*l * C,
+                buffers.attnX + l * C, buffers.RMS + 2*l, gradients.WNorm + 2*l * C * C, params.WNorm + 2*l * C * C, C, N, H, T, epsilon
             );
         }
         else{
             flashAttentionBackward<<<attnGrid, attnBlock>>>(
                 attnBuffers, attnParams, attnGradients, attnBackBuffers,
-                backbuffers.dL_dAttnX[l], backbuffers.dL_dXNorm[l], backbuffers.dL_dmoeY[l - 1], buffers.XNorm[2*l],
-                buffers.attnX[l], buffers.RMS[2*l], gradients.WNorm[2*l], params.WNorm[2*l], C, N, H, T, epsilon
+                gradients.BNorm + 2*l * C, backbuffers.dL_dXNorm + l * C, backbuffers.dL_dmoeY + (l - 1) * C, buffers.XNorm + 2*l * C,
+                buffers.attnX + l * C, buffers.RMS + 2*l, gradients.WNorm + 2*l * C * C, params.WNorm + 2*l * C * C, C, N, H, T, epsilon
             );
         }
 

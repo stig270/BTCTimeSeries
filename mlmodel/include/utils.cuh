@@ -37,9 +37,9 @@ __device__ inline void sgemm(float* A, float*B, float*C, float alpha, float beta
         
 
 
-        float tresults[TM*TN] = {0.0};
-        float regM[TM] = {0.0};
-        float regN[TN] = {0.0};
+        float tresults[TM*TN] = {0.0f};
+        float regM[TM] = {0.0f};
+        float regN[TN] = {0.0f};
 
         for(uint i = 0; i < K; ++i){
 
@@ -96,7 +96,7 @@ __device__ inline void sgemm_naive(float* A, float*B, float*C, float alpha, floa
     //enable 3d
 
     if(row < M &&  col < N){
-        float value = 0.0;
+        float value = 0.0f;
         for(int i = 0; i < K; ++i){
 
             value += A[row * K + i] * B[i * N + col];
@@ -162,9 +162,9 @@ __device__ inline void dotProduct(float* A, float* B, float*C, int D, int E, int
     uint vecPerRow = D / 4;
     uint tid = threadIdx.x;
     const uint mask = (1u << vecPerRow) - 1;
-    float regA[4] = {0.0};
-    float regB[4] = {0.0};
-    float result = 0.0;
+    float regA[4] = {0.0f};
+    float regB[4] = {0.0f};
+    float result = 0.0f;
     for(uint i = 0; i < vecPerRow; ++i){
         reinterpret_cast<float4*>(regA)[0] = reinterpret_cast<float4*>(&A[(tid + i) * 4])[0];
         reinterpret_cast<float4*>(regB)[0] = reinterpret_cast<float4*>(&B[(tid + i) * 4])[0];
