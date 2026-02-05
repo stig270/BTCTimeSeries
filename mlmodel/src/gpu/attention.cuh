@@ -2,9 +2,10 @@
 #define ATTENTION_CUH
 
 #include "utils.cuh"
-#include "linear.cu"
+#include "linear.cuh"
 #include "activationfunctions.cuh"
 #include <cuda_runtime.h>
+#include <cooperative_groups.h>
 
 struct AttentionBuffers {
     float* theta;
@@ -41,123 +42,96 @@ struct AttentionBackBuffers {
     float* dL_dKT;
     float* dL_dKR;
     float* dL_dQR;
-    float* Qw; // qkw 
-    float* Kw; // qkw + C*C
-    float* Vw; // qkw + 2*C*C
-    float* dL_dQCLS;
-    float* dL_dKCLS;
-    float* dL_dVCLS;
+    float* dL_dqkv;
+    float* dL_dXtmp;
 };
 
-__device__ inline void attentionForward(float* X, const AttentionBuffers& buffers, const AttentionParams& params, int T, int C, int N, int H){
+__device__ inline void attentionForward(float* X, const AttentionBuffers& buffers, const AttentionParams& params,
+     const int T, const int C, const int N, const int H){
    
-    float* qkvw = params.qkvw;
-    float* qkvb = params.qkvb;
-    float* projW = params.projW;
-    float* projB = params.projB;
-    float* qkv = buffers.qkv;
-    float* Q = buffers.Q;
-    float* K = buffers.K;
-    float* V = buffers.V;
-    float* KR = buffers.KR;
-    float* QR = buffers.QR;
-    float* KT = buffers.KT;
-    float* scores = buffers.scores;
-    float* W = buffers.W;
-    float* Y = buffers.Y;
-    float* projX = buffers.projX;
-    float* projY = buffers.projY;
-
+    linearForward<16, 16, 8, 4, 4>(X, params.qkvw, params.qkvb, buffers.qkv, T, 3 * N * H, C, 1);
     
-    
-    linearForward<16, 16, 8, 4, 4>(X, qkvw, qkvb, qkv, T, 3 * N * H, C, 1);
-    uint head = blockIdx.x;
-    uint row = blockIdx.z;
-    uint tid = threadIdx.x;
-    uint colBase = tid * 4;
-    uint strideQKV = 3 * N * H;
+    int head = blockIdx.x;
+    int row = blockIdx.z;
+    int tid = threadIdx.x;
+    int colBase = tid * 4;
 
-    if(tid < (H / 4) && head < N && row < T){
+    if(head < N && row < T && blockIdx.y == 0){
         
+        if(tid < H){
+            float4 qVec = reinterpret_cast<float4*>(&buffers.qkv[(head * T + row) * H + colBase])[0];
+            float4 kVec = reinterpret_cast<float4*>(&buffers.qkv[N*T*H + (head * T + row) * H + colBase])[0];
+            reinterpret_cast<float4*>(&buffers.V[(head * T + row) * H + colBase])[0] = reinterpret_cast<float4*>(&buffers.qkv[2*N*T*H + (head * T + row) * H + colBase])[0];
 
-        reinterpret_cast<float4*>(&Q[(head * T + row) * H + colBase])[0] = reinterpret_cast<float4*>(&qkv[row * strideQKV + head * H + colBase])[0];
-        reinterpret_cast<float4*>(&K[(head * T + row) * H + colBase])[0] = reinterpret_cast<float4*>(&qkv[row * strideQKV + N * H + head * H + colBase])[0];
-        reinterpret_cast<float4*>(&V[(head * T + row) * H + colBase])[0] = reinterpret_cast<float4*>(&qkv[row * strideQKV + 2 * N * H + head * H + colBase])[0];
+            reinterpret_cast<float4*>(&buffers.Q[(head * T + row) * H + colBase])[0] = qVec;
+            reinterpret_cast<float4*>(&buffers.K[(head * T + row) * H + colBase])[0] = kVec;
+            float thetaVal[2];
+            float cosTheta[2];
+            float sinTheta[2];
 
+            // accesses could be further optimised to reduce bank conflicts
+            reinterpret_cast<float2*>(&thetaVal)[0] = reinterpret_cast<float2*>(&buffers.theta[row * (H / 2) + tid * 2])[0];
+            cosTheta[0] = cosf(thetaVal[0]);
+            sinTheta[0] = sinf(thetaVal[0]);
+            cosTheta[1] = cosf(thetaVal[1]);
+            sinTheta[1] = sinf(thetaVal[1]);
 
-        float4 kVec = reinterpret_cast<float4*>(&K[(head * T + row) * H + colBase])[0];
-        float4 qVec = reinterpret_cast<float4*>(&Q[(head * T + row) * H + colBase])[0];
+            alignas(16) float regKR[4] = {0.0f};
+            alignas(16) float regQR[4] = {0.0f};
 
-        float thetaVal[2];
-        float cosTheta[2];
-        float sinTheta[2];
+            regKR[0] = kVec.x * cosTheta[0] - kVec.y * sinTheta[0];
+            regKR[1] = kVec.x * sinTheta[0] + kVec.y * cosTheta[0];
+            regKR[2] = kVec.z * cosTheta[1] - kVec.w * sinTheta[1];
+            regKR[3] = kVec.z * sinTheta[1] + kVec.w * cosTheta[1];
+            regQR[0] = qVec.x * cosTheta[0] - qVec.y * sinTheta[0];
+            regQR[1] = qVec.x * sinTheta[0] + qVec.y * cosTheta[0];
+            regQR[2] = qVec.z * cosTheta[1] - qVec.w * sinTheta[1];
+            regQR[3] = qVec.z * sinTheta[1] + qVec.w * cosTheta[1];
 
-        // accesses could be further optimised to reduce bank conflicts
-        reinterpret_cast<float2*>(&thetaVal)[0] = reinterpret_cast<float2*>(&buffers.theta[row * (H / 2) + tid * 2])[0];
-        cosTheta[0] = cosf(thetaVal[0]);
-        sinTheta[0] = sinf(thetaVal[0]);
-        cosTheta[1] = cosf(thetaVal[1]);
-        sinTheta[1] = sinf(thetaVal[1]);
+            reinterpret_cast<float4*>(&buffers.KR[(head * T + row) * H + colBase])[0] = reinterpret_cast<float4*>(regKR)[0];
+            reinterpret_cast<float4*>(&buffers.QR[(head * T + row) * H + colBase])[0] = reinterpret_cast<float4*>(regQR)[0];
 
-        KR[(head * T + row) * H + colBase + 0] = kVec.x * cosTheta[0] - kVec.y * sinTheta[0];
-        KR[(head * T + row) * H + colBase + 1] = kVec.x * sinTheta[0] + kVec.y * cosTheta[0];
-        KR[(head * T + row) * H + colBase + 2] = kVec.z * cosTheta[1] - kVec.w * sinTheta[1];
-        KR[(head * T + row) * H + colBase + 3] = kVec.z * sinTheta[1] + kVec.w * cosTheta[1];
-        QR[(head * T + row) * H + colBase + 0] = qVec.x * cosTheta[0] - qVec.y * sinTheta[0];
-        QR[(head * T + row) * H + colBase + 1] = qVec.x * sinTheta[0] + qVec.y * cosTheta[0];
-        QR[(head * T + row) * H + colBase + 2] = qVec.z * cosTheta[1] - qVec.w * sinTheta[1];
-        QR[(head * T + row) * H + colBase + 3] = qVec.z * sinTheta[1] + qVec.w * cosTheta[1];
-
-
-        kVec = reinterpret_cast<float4*>(&KR[(head * T + row) * H + colBase])[0];
-
-        __shared__ float Ks[H*T];
-        if(colBase < H){
-        Ks[colBase + 0 + row] = kVec.x;
-        Ks[colBase + 1 + row] = kVec.y;
-        Ks[colBase + 2 + row] = kVec.z;
-        Ks[colBase + 3 + row] = kVec.w;
-        }
+            
         
-        __syncthreads();
-
-        if(colBase < H){
             #pragma unroll
-            for(uint i = 0; i < 4; i++){
-                KT[T * (head * H + colBase + i) + row] = Ks[colBase + i + row % H];
-            }
-        }   
+            for(int i = 0; i < 4; i++){
+                buffers.KT[T * (head * H + colBase + i) + row] = regKR[i];
+            } 
+        }
+        __syncthreads();    
+    }
+    await();
+   
 
+    sgemm<16, 16, 4, 4, 4>(buffers.KT, buffers.QR, buffers.scores, rsqrtf((float)H), 0.0f, T, T, H, N);
+    softmaxForward(buffers.scores, buffers.W, T, T, N);
+    sgemm<16, 4, 16, 4, 4>(buffers.W, buffers.V, buffers.Y, 1.0f, 0.0f, T, H, T, N);
+
+    if(head < N && row < T && blockIdx.y == 0){
+        if(tid < H){
+        reinterpret_cast<float4*>(&buffers.projX[(row * N + head) * H + colBase])[0] = 
+            reinterpret_cast<float4*>(&buffers.Y[(head * T + row) * H + colBase])[0];
+        }
         __syncthreads();
     }
-    sgemm<16, 16, 4, 4, 4>(KT, QR, scores, rsqrtf((float)H), 0.0f, T, T, H, N);
-    softmaxForward(scores, W, T, N);
-    sgemm<16, 4, 16, 2, 2>(V, W, Y, 1.0f, 0.0f, T, H, T, N);
+    await();
 
-    if(tid < (H / 4) && head < N && row < T){
-        reinterpret_cast<float4*>(&projX[(row * N + head) * H + colBase])[0] = 
-            reinterpret_cast<float4*>(&Y[(head * T + row) * H + colBase])[0];
-
-        __syncthreads();
-    }
-
-
-    linearForward<16, 16, 8, 4, 4>(projX, projW, projB, projY, T, C, C, 1);
+    linearForward<16, 16, 8, 4, 4>(buffers.projX, params.projW, params.projB, buffers.projY, T, C, C, 1);
 
 }
 
 __device__ inline void attentionBackward(const AttentionBuffers& buffers,
     const AttentionParams& params, AttentionParams& gradients, AttentionBackBuffers& backBuffers,
-    float* X, float* dL_dX, int C, int N, int H, int T){
+    float* X, float* dL_dX, const int C, const int N, const int H, const int T){
 
-    linearBackward<16, 16, 8, 4, 4>(gradients.projB, gradients.projW, backBuffers.dL_dProjX, buffers.projX, params.projW, T, C, C, 1);
+    linearBackward<16, 16, 16, 4, 4, 4>(gradients.projB, gradients.projW, backBuffers.dL_dProjX, buffers.projX, params.projW, T, C, C, 1);
     
 
-    const uint tid = threadIdx.x;
-    const uint head = blockIdx.x;
-    const uint col = blockIdx.y;
-    const uint row = blockIdx.z;
-    const uint colBase = tid * 4;
+    const int tid = threadIdx.x;
+    const int head = blockIdx.x;
+    const int col = blockIdx.y;
+    const int row = blockIdx.z;
+    const int colBase = tid * 4;
     if(tid < (H / 4) && head < N && row < T){
         reinterpret_cast<float4*>(&backBuffers.dL_dY[(head * T + row) * H + tid * 4])[0] = 
             reinterpret_cast<float4*>(&backBuffers.dL_dProjX[(row * N + head) * H + tid * 4])[0];
@@ -165,14 +139,14 @@ __device__ inline void attentionBackward(const AttentionBuffers& buffers,
         __syncthreads();
     }
 
-    sgemm<16, 2, 16, 4, 1>(buffers.W, backBuffers.dL_dY, backBuffers.dL_dV, 1.0f, 0.0f, T, H, T, N);
-    sgemm<16, 16, 2, 4, 4>(backBuffers.dL_dY, buffers.V, backBuffers.dL_dW, 1.0f, 0.0f, T, T, H, N);
+    sgemm<16, 4, 16, 4, 4>(buffers.W, backBuffers.dL_dY, backBuffers.dL_dV, 1.0f, 0.0f, T, H, T, N);
+    sgemm<16, 16, 4, 4, 4>(backBuffers.dL_dY, buffers.V, backBuffers.dL_dW, 1.0f, 0.0f, T, T, H, N);
 
 
-    softmaxBackward(backBuffers.dL_dW, buffers.W, backBuffers.J, backBuffers.dL_dScores, T, N);
+    softmaxBackward(backBuffers.dL_dW, buffers.W, backBuffers.J, backBuffers.dL_dScores, T, T, N);
 
-    sgemm<16, 4, 16, 2, 4>(buffers.KT, backBuffers.dL_dScores, backBuffers.dL_dQR, rsqrtf((float)H), 0.0f, T, H, T, N);
-    sgemm<4, 16, 16, 4, 2>(backBuffers.dL_dScores, buffers.QR, backBuffers.dL_dKT, rsqrtf((float)H), 0.0f, H, T, T, N);
+    sgemm<16, 4, 16, 4, 4>(buffers.KT, backBuffers.dL_dScores, backBuffers.dL_dQR, rsqrtf((float)H), 0.0f, T, H, T, N);
+    sgemm<4, 16, 8, 4, 4>(backBuffers.dL_dScores, buffers.QR, backBuffers.dL_dKT, rsqrtf((float)H), 0.0f, H, T, T, N);
 
     if(col < H && head < N && row < T/4){
         float4 dL_dKTvec = reinterpret_cast<float4*>(&backBuffers.dL_dKT[(head * T + col) * H + row * 4])[0];
@@ -197,42 +171,59 @@ __device__ inline void attentionBackward(const AttentionBuffers& buffers,
         cosTheta[1] = cosf(thetaVal[1]);
         sinTheta[1] = sinf(thetaVal[1]);
 
-        backBuffers.dL_dK[(head * T + row) * H + colBase + 0] = dL_dKRvec.x * cosTheta[0] - dL_dKRvec.y * sinTheta[0];
-        backBuffers.dL_dK[(head * T + row) * H + colBase + 1] = dL_dKRvec.x * sinTheta[0] + dL_dKRvec.y * cosTheta[0];
-        backBuffers.dL_dK[(head * T + row) * H + colBase + 2] = dL_dKRvec.z * cosTheta[1] - dL_dKRvec.w * sinTheta[1];
-        backBuffers.dL_dK[(head * T + row) * H + colBase + 3] = dL_dKRvec.z * sinTheta[1] + dL_dKRvec.w * cosTheta[1];
-        backBuffers.dL_dQ[(head * T + row) * H + colBase + 0] = dL_dQRvec.x * cosTheta[0] - dL_dQRvec.y * sinTheta[0];
-        backBuffers.dL_dQ[(head * T + row) * H + colBase + 1] = dL_dQRvec.x * sinTheta[0] + dL_dQRvec.y * cosTheta[0];
-        backBuffers.dL_dQ[(head * T + row) * H + colBase + 2] = dL_dQRvec.z * cosTheta[1] - dL_dQRvec.w * sinTheta[1];
-        backBuffers.dL_dQ[(head * T + row) * H + colBase + 3] = dL_dQRvec.z * sinTheta[1] + dL_dQRvec.w * cosTheta[1];
+        alignas(16) float regdL_dK[4] = {0.0f};
+        alignas(16) float regdL_dQ[4] = {0.0f};
+        regdL_dK[0] = dL_dKRvec.x * cosTheta[0] - dL_dKRvec.y * sinTheta[0];
+        regdL_dK[1] = dL_dKRvec.x * sinTheta[0] + dL_dKRvec.y * cosTheta[0];
+        regdL_dK[2] = dL_dKRvec.z * cosTheta[1] - dL_dKRvec.w * sinTheta[1];
+        regdL_dK[3] = dL_dKRvec.z * sinTheta[1] + dL_dKRvec.w * cosTheta[1];
+        regdL_dQ[0] = dL_dQRvec.x * cosTheta[0] - dL_dQRvec.y * sinTheta[0];
+        regdL_dQ[1] = dL_dQRvec.x * sinTheta[0] + dL_dQRvec.y * cosTheta[0];
+        regdL_dQ[2] = dL_dQRvec.z * cosTheta[1] - dL_dQRvec.w * sinTheta[1];
+        regdL_dQ[3] = dL_dQRvec.z * sinTheta[1] + dL_dQRvec.w * cosTheta[1];
 
-        __syncThreads();
+        reinterpret_cast<float4*>(&backBuffers.dL_dK[(head * T + row) * H + colBase])[0] = reinterpret_cast<float4*>(regdL_dK)[0];
+        reinterpret_cast<float4*>(&backBuffers.dL_dQ[(head * T + row) * H + colBase])[0] = reinterpret_cast<float4*>(regdL_dQ)[0];
+        __syncthreads();
     }
 
 
-    const uint baseIdx = (head * H + tid)*4;
+    const int baseIdx = (head * H + tid)*4;
     if(tid < (H / 4) && head < N && row == 0){
         float4 dL_dQCLS = reinterpret_cast<float4*>(&backBuffers.dL_dQ[head * T * H + (T-1) * H + colBase])[0];
         float4 dL_dKCLS = reinterpret_cast<float4*>(&backBuffers.dL_dK[head * T * H + (T-1) * H + colBase])[0];
         float4 dL_dVCLS = reinterpret_cast<float4*>(&backBuffers.dL_dV[head * T * H + (T-1) * H + colBase])[0];
 
 
-        reinterpret_cast<float4*>(&backBuffers.dL_dQCLS[head * H + colBase])[0] = dL_dQCLS;
-        reinterpret_cast<float4*>(&backBuffers.dL_dKCLS[head * H + colBase])[0] = dL_dKCLS;
-        reinterpret_cast<float4*>(&backBuffers.dL_dVCLS[head * H + colBase])[0] = dL_dVCLS;
+        reinterpret_cast<float4*>(&backBuffers.dL_dqkv[head * H + colBase])[0] = dL_dQCLS;
+        reinterpret_cast<float4*>(&backBuffers.dL_dqkv[head * H + colBase + N * H])[0] = dL_dKCLS;
+        reinterpret_cast<float4*>(&backBuffers.dL_dqkv[head * H + colBase + 2 * N * H])[0] = dL_dVCLS;
 
         reinterpret_cast<float4*>(&gradients.qkvb[baseIdx])[0] = dL_dQCLS;
         reinterpret_cast<float4*>(&gradients.qkvb[baseIdx + N * H])[0] = dL_dKCLS;
         reinterpret_cast<float4*>(&gradients.qkvb[baseIdx + 2 * N * H])[0] = dL_dVCLS;
-        __syncThreads();
+        __syncthreads();
     }
 
-    sgemm<1, 16, 8, 1, 4>(X, gradients.qkvb, gradients.qkvw, 1.0f, 0.0f, C, 3*N*H, 1, 1);
+    sgemm_naive(X, gradients.qkvb, gradients.qkvw, 1.0f, 0.0f, C, 3*N*H, 1, 1);
 
 
-    sgemm<1, 16, 8, 1, 4>(backBuffers.dL_dQCLS, backBuffers.Qw, dL_dX, 1.0f, 0.0f, 1, C, C, 1);
-    sgemm<1, 16, 8, 1, 4>(backBuffers.dL_dKCLS, backBuffers.Kw, dL_dX, 1.0f, 1.0f, 1, C, C, 1);
-    sgemm<1, 16, 8, 1, 4>(backBuffers.dL_dVCLS, backBuffers.Vw, dL_dX, 1.0f, 1.0f, 1, C, C, 1);
+    sgemm<1, 16, 8, 1, 4>(backBuffers.dL_dqkv, params.qkvw, backBuffers.dL_dXtmp, 1.0f, 0.0f, 1, C, C, 3);
+    
+    if(tid < (C/4) && row == 0 && head == 0){
+        float dL_dX1[4] = {0.0f};
+        float dL_dX2[4] = {0.0f};
+        float dL_dX3[4] = {0.0f};
+        float regdL_dX[4] = {0.0f};
+        reinterpret_cast<float4*>(&dL_dX1)[0] = reinterpret_cast<float4*>(&backBuffers.dL_dXtmp[tid * 4])[0];
+        reinterpret_cast<float4*>(&dL_dX2)[0] = reinterpret_cast<float4*>(&backBuffers.dL_dXtmp[C + tid * 4])[0];
+        reinterpret_cast<float4*>(&dL_dX3)[0] = reinterpret_cast<float4*>(&backBuffers.dL_dXtmp[2 * C + tid * 4])[0];
+        #pragma unroll
+        for(int i = 0; i < 4; i++){
+            regdL_dX[i] = dL_dX1[i] + dL_dX2[i] + dL_dX3[i];
+        }
+        reinterpret_cast<float4*>(&dL_dX[tid * 4])[0] = reinterpret_cast<float4*>(&regdL_dX)[0];
+    }
 
     
 

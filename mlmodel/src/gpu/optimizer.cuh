@@ -7,16 +7,16 @@
 
 inline __device__ void optimizerStep(Parameter& t, float learningRate, float beta1, float beta2, float epsilon, float l2Lambda, int time,
     int D1, int D2, int D3, int V){
-    uint d1 = blockIdx.x;
-    uint d2 = blockIdx.y;
-    uint d3 = blockIdx.z;
-    uint tid = threadIdx.x;
+    int d1 = blockIdx.x;
+    int d2 = blockIdx.y;
+    int d3 = blockIdx.z;
+    int tid = threadIdx.x;
     if(d1 < D1 && d2 < D2 && d3 < D3 && tid < (V / 4)){
         if(V%4 == 0){
-            uint idx = d1 * D2 * D3 * V + d2 * D3 * V + d3 * V + tid * 4;
-            float4 grad = reinterpret_cast<float4*>(t.gradient[idx])[0];
-            float4 vel = reinterpret_cast<float4*>(t.velocity[idx])[0];
-            float4 mom = reinterpret_cast<float4*>(t.momentum[idx])[0];
+            int idx = d1 * D2 * D3 * V + d2 * D3 * V + d3 * V + tid * 4;
+            float4 grad = reinterpret_cast<float4*>(&t.gradient[idx])[0];
+            float4 vel = reinterpret_cast<float4*>(&t.velocity[idx])[0];
+            float4 mom = reinterpret_cast<float4*>(&t.momentum[idx])[0];
 
             mom.x = (beta1 * mom.x + (1 - beta1) * grad.x)/(1 - powf(beta1, time));
             mom.y = (beta1 * mom.y + (1 - beta1) * grad.y)/(1 - powf(beta1, time));
@@ -28,19 +28,19 @@ inline __device__ void optimizerStep(Parameter& t, float learningRate, float bet
             vel.z = (beta2 * vel.z + (1 - beta2) * grad.z * grad.z)/(1 - powf(beta2, time));
             vel.w = (beta2 * vel.w + (1 - beta2) * grad.w * grad.w)/(1 - powf(beta2, time));
 
-            reinterpret_cast<float4*>(t.velocity[idx])[0] = vel;
-            reinterpret_cast<float4*>(t.momentum[idx])[0] = mom;
+            reinterpret_cast<float4*>(&t.velocity[idx])[0] = vel;
+            reinterpret_cast<float4*>(&t.momentum[idx])[0] = mom;
 
-            float4 param = reinterpret_cast<float4*>(t.parameter[idx])[0];
+            float4 param = reinterpret_cast<float4*>(&t.parameter[idx])[0];
             param.x -= learningRate * mom.x / (sqrtf(vel.x) + epsilon) + l2Lambda * param.x;
             param.y -= learningRate * mom.y / (sqrtf(vel.y) + epsilon) + l2Lambda * param.y;
             param.z -= learningRate * mom.z / (sqrtf(vel.z) + epsilon) + l2Lambda * param.z;
             param.w -= learningRate * mom.w / (sqrtf(vel.w) + epsilon) + l2Lambda * param.w;
 
-            reinterpret_cast<float4*>(t.parameter[idx])[0] = param;
+            reinterpret_cast<float4*>(&t.parameter[idx])[0] = param;
         }
         else{
-            uint idx = d1 * D2 * D3 * V + d2 * D3 * V + d3 * V + tid;
+            int idx = d1 * D2 * D3 * V + d2 * D3 * V + d3 * V + tid;
             t.velocity[idx] = beta1 * t.velocity[idx] + (1 - beta1) * t.gradient[idx];
             t.momentum[idx] = beta2 * t.momentum[idx] + (1 - beta2) * t.gradient[idx] * t.gradient[idx];
             t.parameter[idx] -= learningRate * t.velocity[idx] / (sqrtf(t.momentum[idx]) + epsilon) + l2Lambda * t.parameter[idx];

@@ -1,11 +1,16 @@
 #include <iostream>
 #include <vector>
 #include <fstream>
+#include <sstream>
+#include <random>
 #include "config.h"
 #include "model.h"
-#include "transformer.cu"
+#include <cuda_runtime.h>
 
-void runInference(const ModelConfig& config, const std::string& modelPath, const std::string& inputPath){
+
+#define CHECK_CUDA() checkCudaError(__FILE__, __LINE__)
+
+void runInference(const ModelHyperparameters& config, const std::string& modelPath, const std::string& inputPath){
 
     const int T = config.T;
     const int C = config.C;
@@ -16,12 +21,11 @@ void runInference(const ModelConfig& config, const std::string& modelPath, const
     const int N = config.N;
     const int K = config.K;
     const int B = config.B;
-    const float epsilon = config.epsilon;
 
     std::random_device rd;
     std::mt19937 gen(rd());
 
-    ParameterSizes parameterSizes = new ParameterSizes;
+    ParameterSizes parameterSizes;
     parameterSizes.CLS = C;
     parameterSizes.WNorm = (2 * L + 1) * C * C;
     parameterSizes.BNorm = (2 * L + 1) * C;
@@ -40,10 +44,10 @@ void runInference(const ModelConfig& config, const std::string& modelPath, const
     parameterSizes.WCLS = C * F;
     parameterSizes.BCLS = F;
 
-    ModelParameters params = new ModelParameters;
-    IntermediateBuffers buffers = new IntermediateBuffers;  
+    ModelParameters params;
+    IntermediateBuffers buffers;  
 
-    HostParameters hostParameters = loadParams(parameterSizes, config, modelPath);
+    HostParameters hostParameters = loadParams(parameterSizes, modelPath);
 
     std::string line;
     std::vector<std::vector<float>> test_data;
@@ -57,7 +61,7 @@ void runInference(const ModelConfig& config, const std::string& modelPath, const
         std::vector<float> features;
         
         std::getline(ss, cell, ',');
-        
+        std::getline(ss, cell, ',');
         std::vector<std::string> cells;
         while (std::getline(ss, cell, ',')) {
             cells.push_back(cell);
@@ -76,11 +80,13 @@ void runInference(const ModelConfig& config, const std::string& modelPath, const
     float* X; 
     float* Y; 
 
-    size_t XSize = T * C * sizeof(float); 
-    size_t YSize = F * sizeof(float);
+    size_t XSize = T * C; 
+    size_t YSize = F;
 
-    cudaMalloc(&X, XSize);
-    cudaMalloc(&Y, YSize);
+    cudaMalloc(&X, XSize * sizeof(float));
+    cudaMalloc(&Y, YSize * sizeof(float));
+    cudaMemset(Y, 0, YSize * sizeof(float));
+   
 
     std::vector<float> XHost(XSize);
     std::vector<float> YHost(YSize);
@@ -90,9 +96,11 @@ void runInference(const ModelConfig& config, const std::string& modelPath, const
             XHost[t * C + c] = test_data[t][c];
         }
     }
+
+    cudaMemcpy(X, XHost.data(), (XSize - C) * sizeof(float), cudaMemcpyHostToDevice);
+
     
     params.CLS = X + (T - 1) * C;
-    cudaMalloc(&params.CLS, parameterSizes.CLS * sizeof(float));
     cudaMemcpy(params.CLS, hostParameters.CLS.data(), parameterSizes.CLS * sizeof(float), cudaMemcpyHostToDevice);
 
     cudaMalloc(&params.WNorm, parameterSizes.WNorm * sizeof(float));
@@ -144,57 +152,103 @@ void runInference(const ModelConfig& config, const std::string& modelPath, const
     cudaMemcpy(params.BCLS, hostParameters.BCLS.data(), parameterSizes.BCLS * sizeof(float), cudaMemcpyHostToDevice);
 
     
-    cudaMalloc(&buffers.theta, T * C * sizeof(float));
-    cudaMalloc(&buffers.attnNormX, L * T * C * sizeof(float));
+    cudaMalloc(&buffers.theta, T * H / 2 * sizeof(float));
+    cudaMemset(buffers.theta, 0, T * H / 2 * sizeof(float));
+    cudaMalloc(&buffers.attnNormX, (L - 1) * T * C * sizeof(float));
+    cudaMemset(buffers.attnNormX, 0, (L - 1) * T * C * sizeof(float));
     cudaMalloc(&buffers.attnNorm, L * T * C * sizeof(float));
-    cudaMalloc(&buffers.attnRMS, L * sizeof(float));
+    cudaMemset(buffers.attnNorm, 0, L * T * C * sizeof(float));
+    cudaMalloc(&buffers.attnX, L * T * C * sizeof(float));
+    cudaMemset(buffers.attnX, 0, L * T * C * sizeof(float));
+    cudaMalloc(&buffers.RMS, (2*L + 1) * sizeof(float));
+    cudaMemset(buffers.RMS, 0, (2*L + 1) * sizeof(float));
     cudaMalloc(&buffers.qkv, L * 3 * N * H * T * sizeof(float));
+    cudaMemset(buffers.qkv, 0, L * 3 * N * H * T * sizeof(float));
     cudaMalloc(&buffers.Q, L * N * H * T * sizeof(float));
+    cudaMemset(buffers.Q, 0, L * N * H * T * sizeof(float));
     cudaMalloc(&buffers.K, L * N * H * T * sizeof(float));
+    cudaMemset(buffers.K, 0, L * N * H * T * sizeof(float));
     cudaMalloc(&buffers.V, L * N * H * T * sizeof(float));
+    cudaMemset(buffers.V, 0, L * N * H * T * sizeof(float));
     cudaMalloc(&buffers.QR, L * N * H * T * sizeof(float));
+    cudaMemset(buffers.QR, 0, L * N * H * T * sizeof(float));
     cudaMalloc(&buffers.KR, L * N * H * T * sizeof(float));
+    cudaMemset(buffers.KR, 0, L * N * H * T * sizeof(float));
     cudaMalloc(&buffers.KT, L * N * H * T * sizeof(float));
-    cudaMalloc(&buffers.attnScores, L * N * H * T * T * sizeof(float));
-    cudaMalloc(&buffers.attnWeights, L * N * H * T * T * sizeof(float));
+    cudaMemset(buffers.KT, 0, L * N * H * T * sizeof(float));
+    cudaMalloc(&buffers.attnScores, L * N * T * T * sizeof(float));
+    cudaMemset(buffers.attnScores, 0, L * N * T * T * sizeof(float));
+    cudaMalloc(&buffers.attnWeights, L * N * T * T * sizeof(float));
+    cudaMemset(buffers.attnWeights, 0, L * N * T * T * sizeof(float));
     cudaMalloc(&buffers.attnY, L * T * C * sizeof(float));
+    cudaMemset(buffers.attnY, 0, L * T * C * sizeof(float));
     cudaMalloc(&buffers.projX, L * T * C * sizeof(float));
+    cudaMemset(buffers.projX, 0, L * T * C * sizeof(float));
     cudaMalloc(&buffers.projY, L * T * C * sizeof(float));
+    cudaMemset(buffers.projY, 0, L * T * C * sizeof(float));
+    cudaMalloc(&buffers.moeNormX, L * T * C * sizeof(float));
+    cudaMemset(buffers.moeNormX, 0, L * T * C * sizeof(float));
+    cudaMalloc(&buffers.moeNorm, L * T * C * sizeof(float));
+    cudaMemset(buffers.moeNorm, 0, L * T * C * sizeof(float));
+    cudaMalloc(&buffers.moeX, L * T * C * sizeof(float));
+    cudaMemset(buffers.moeX, 0, L * T * C * sizeof(float));
     cudaMalloc(&buffers.moeGate1, L * T * E * sizeof(float));
+    cudaMemset(buffers.moeGate1, 0, L * T * E * sizeof(float));
     cudaMalloc(&buffers.moeProbs1, L * T * E * sizeof(float));
+    cudaMemset(buffers.moeProbs1, 0, L * T * E * sizeof(float));
     cudaMalloc(&buffers.moeSorted1, L * T * E * sizeof(float));
+    cudaMemset(buffers.moeSorted1, 0, L * T * E * sizeof(float));
     cudaMalloc(&buffers.moeIndices1, L * T * E * sizeof(int));
-    cudaMalloc(&buffers.moeW1, L * K * C * C * 4 *sizeof(float));
-    cudaMalloc(&buffers.moeB1, L * K * C * 4 * sizeof(float));
-    cudaMalloc(&buffers.moeExperts1, L * K * C * 4  * sizeof(float));
+    cudaMemset(buffers.moeIndices1, 0, L * T * E * sizeof(int));
+    cudaMalloc(&buffers.moeW1, L * T * K * C * C * 4 *sizeof(float));
+    cudaMemset(buffers.moeW1, 0, L * T * K * C * C * 4 *sizeof(float));
+    cudaMalloc(&buffers.moeB1, L * T * K * C * 4 * sizeof(float));
+    cudaMemset(buffers.moeB1, 0, L * T * K * C * 4 * sizeof(float));
+    cudaMalloc(&buffers.moeExperts1, L * T * K * C * 4  * sizeof(float));
+    cudaMemset(buffers.moeExperts1, 0, L * T * K * C * 4  * sizeof(float));
     cudaMalloc(&buffers.moeY1, L * T * C * 4 * sizeof(float));
-    cudaMalloc(&buffers.moeHidden1, L * T * C * 4 * sizeof(float));
+    cudaMemset(buffers.moeY1, 0, L * T * C * 4 * sizeof(float));
+    cudaMalloc(&buffers.moeHidden, L * T * C * 4 * sizeof(float));
+    cudaMemset(buffers.moeHidden, 0, L * T * C * 4 * sizeof(float));
     cudaMalloc(&buffers.moeGate2, L * T * E * sizeof(float));
+    cudaMemset(buffers.moeGate2, 0, L * T * E * sizeof(float));
     cudaMalloc(&buffers.moeProbs2, L * T * E * sizeof(float));
+    cudaMemset(buffers.moeProbs2, 0, L * T * E * sizeof(float));
     cudaMalloc(&buffers.moeSorted2, L * T * E * sizeof(float));
+    cudaMemset(buffers.moeSorted2, 0, L * T * E * sizeof(float));
     cudaMalloc(&buffers.moeIndices2, L * T * E * sizeof(int));
-    cudaMalloc(&buffers.moeW2, L * K * C * 4 * C * sizeof(float));
-    cudaMalloc(&buffers.moeB2, L * K * C * sizeof(float));
-    cudaMalloc(&buffers.moeExperts2, L * K * C * sizeof(float));
+    cudaMemset(buffers.moeIndices2, 0, L * T * E * sizeof(int));
+    cudaMalloc(&buffers.moeW2, L * T * K * C * 4 * C * sizeof(float));
+    cudaMemset(buffers.moeW2, 0, L * T * K * C * 4 * C * sizeof(float));
+    cudaMalloc(&buffers.moeB2, L * T * K * C * sizeof(float));
+    cudaMemset(buffers.moeB2, 0, L * T * K * C * sizeof(float));
+    cudaMalloc(&buffers.moeExperts2, L * T * K * C * sizeof(float));
+    cudaMemset(buffers.moeExperts2, 0, L * T * K * C * sizeof(float));
     cudaMalloc(&buffers.moeY2, L * T * C * sizeof(float));
+    cudaMemset(buffers.moeY2, 0, L * T * C * sizeof(float));
     cudaMalloc(&buffers.decoderY, T * C * sizeof(float));
+    cudaMemset(buffers.decoderY, 0, T * C * sizeof(float));
     cudaMalloc(&buffers.CLSNorm, C * sizeof(float));
+    cudaMemset(buffers.CLSNorm, 0, C * sizeof(float));
     cudaMalloc(&buffers.ZNormCLS, C * sizeof(float));
+    cudaMemset(buffers.ZNormCLS, 0, C * sizeof(float));
     cudaMalloc(&buffers.ZCLS, F * sizeof(float)); 
-
+    cudaMemset(buffers.ZCLS, 0, F * sizeof(float));
+    
     calculateThetaLauncher(buffers.theta, T, H, B);
+    
+    transformerForward(X, Y, params, config, buffers);
 
-    runTransformerForward(X, Y, params, config, buffers);
-
-    cudaMemcpy(YHost.data(), Y, YSize, cudaMemcpyDeviceToHost);
-
+    cudaDeviceSynchronize();
+    
+   
+    cudaMemcpy(YHost.data(), Y, YSize * sizeof(float), cudaMemcpyDeviceToHost);
     std::cout << "Price Increase: " << YHost[0] * 100 << "%" << std::endl;
     std::cout << "Price Decrease: " << YHost[1] * 100 << "%" << std::endl;
     
 
     cudaFree(X);
     cudaFree(Y);
-    cudaFree(params.CLS);
     cudaFree(params.WNorm);
     cudaFree(params.BNorm);
     cudaFree(params.qkvw);
@@ -215,7 +269,8 @@ void runInference(const ModelConfig& config, const std::string& modelPath, const
     cudaFree(buffers.theta);
     cudaFree(buffers.attnNormX);
     cudaFree(buffers.attnNorm);
-    cudaFree(buffers.attnRMS);
+    cudaFree(buffers.attnX);
+    cudaFree(buffers.RMS);
     cudaFree(buffers.qkv);
     cudaFree(buffers.Q);
     cudaFree(buffers.K);
@@ -228,6 +283,9 @@ void runInference(const ModelConfig& config, const std::string& modelPath, const
     cudaFree(buffers.attnY);
     cudaFree(buffers.projX);
     cudaFree(buffers.projY);
+    cudaFree(buffers.moeNormX);
+    cudaFree(buffers.moeNorm);
+    cudaFree(buffers.moeX);
     cudaFree(buffers.moeGate1);
     cudaFree(buffers.moeProbs1);
     cudaFree(buffers.moeSorted1);
@@ -236,7 +294,7 @@ void runInference(const ModelConfig& config, const std::string& modelPath, const
     cudaFree(buffers.moeB1);
     cudaFree(buffers.moeExperts1);
     cudaFree(buffers.moeY1);
-    cudaFree(buffers.moeHidden1);
+    cudaFree(buffers.moeHidden);
     cudaFree(buffers.moeGate2);
     cudaFree(buffers.moeProbs2);
     cudaFree(buffers.moeSorted2);

@@ -5,7 +5,7 @@
 #include "config.h"
 #include "model.h"
 
-void saveParams(const ParameterSizes& parameterSizes, const HostParameters& params, const ModelConfig& config, const std::string& path){
+void saveParams(const ParameterSizes& parameterSizes, const HostParameters& params, const std::string& path){
     std::ofstream file(path, std::ios::binary);
     file.write(reinterpret_cast<const char*>(params.CLS.data()), parameterSizes.CLS * sizeof(float));
     file.write(reinterpret_cast<const char*>(params.WNorm.data()), parameterSizes.WNorm * sizeof(float));
@@ -27,8 +27,26 @@ void saveParams(const ParameterSizes& parameterSizes, const HostParameters& para
     file.close();
 }
 
-HostParameters loadParams(const ParameterSizes& parameterSizes, const ModelConfig& config, const std::string& path){
-    HostParameters hostParams = new HostParameters;
+HostParameters loadParams(const ParameterSizes& parameterSizes, const std::string& path){
+    HostParameters hostParams;
+
+    hostParams.CLS.resize(parameterSizes.CLS);
+    hostParams.WNorm.resize(parameterSizes.WNorm);
+    hostParams.BNorm.resize(parameterSizes.BNorm);
+    hostParams.qkvw.resize(parameterSizes.qkvw);
+    hostParams.qkvb.resize(parameterSizes.qkvb);
+    hostParams.projW.resize(parameterSizes.projW);
+    hostParams.projB.resize(parameterSizes.projB);
+    hostParams.moegw1.resize(parameterSizes.moegw1);
+    hostParams.moegb1.resize(parameterSizes.moegb1);
+    hostParams.moew1.resize(parameterSizes.moew1);
+    hostParams.moeb1.resize(parameterSizes.moeb1);
+    hostParams.moegw2.resize(parameterSizes.moegw2);
+    hostParams.moegb2.resize(parameterSizes.moegb2);
+    hostParams.moew2.resize(parameterSizes.moew2);
+    hostParams.moeb2.resize(parameterSizes.moeb2);
+    hostParams.WCLS.resize(parameterSizes.WCLS);
+    hostParams.BCLS.resize(parameterSizes.BCLS);
 
     std::ifstream file(path, std::ios::binary);
     file.read(reinterpret_cast<char*>(hostParams.CLS.data()), parameterSizes.CLS * sizeof(float));
@@ -53,12 +71,11 @@ HostParameters loadParams(const ParameterSizes& parameterSizes, const ModelConfi
     return hostParams;
 }
 
-HostParameters initializeParams(const ParameterSizes& parameterSizes, const ModelConfig& config){
+HostParameters initializeParams(const ParameterSizes& parameterSizes, const ModelHyperparameters& config){
 
-    HostParameters hostParams = new HostParameters;
+    HostParameters hostParams;
 
     const int C = config.C;
-    const int L = config.L;
     const int H = config.H;
     const int N = config.N;
     const int E = config.E;

@@ -1,0 +1,103 @@
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\ucrt\corecrt.h
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\ucrt\corecrt_malloc.h
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\ucrt\corecrt_math.h
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\ucrt\corecrt_memcpy_s.h
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\ucrt\corecrt_memory.h
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\ucrt\corecrt_search.h
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\ucrt\corecrt_wctype.h
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\ucrt\corecrt_wstdlib.h
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\ucrt\corecrt_wstring.h
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\ucrt\corecrt_wtime.h
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\ucrt\crtdbg.h
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\ucrt\ctype.h
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\ucrt\errno.h
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\ucrt\math.h
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\ucrt\stddef.h
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\ucrt\stdlib.h
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\ucrt\string.h
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\ucrt\time.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\builtin_types.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\cccl\cuda\std\detail\libcxx\include\__config
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\cccl\cuda\std\detail\__config
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\cccl\cuda\std\type_traits
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\cccl\cuda\std\__cccl\architecture.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\cccl\cuda\std\__cccl\assert.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\cccl\cuda\std\__cccl\attributes.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\cccl\cuda\std\__cccl\builtin.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\cccl\cuda\std\__cccl\compiler.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\cccl\cuda\std\__cccl\cuda_toolkit.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\cccl\cuda\std\__cccl\dialect.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\cccl\cuda\std\__cccl\extended_data_types.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\cccl\cuda\std\__cccl\is_non_narrowing_convertible.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\cccl\cuda\std\__cccl\preprocessor.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\cccl\cuda\std\__cccl\system_header.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\cccl\cuda\std\__cccl\version.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\cccl\cuda\__cccl_config
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\channel_descriptor.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\cooperative_groups.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\cooperative_groups\details\info.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\crt\common_functions.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\crt\cudacc_ext.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\crt\device_double_functions.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\crt\device_double_functions.hpp
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\crt\device_functions.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\crt\device_functions.hpp
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\crt\host_config.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\crt\host_defines.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\crt\math_functions.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\crt\math_functions.hpp
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\crt\sm_100_rt.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\crt\sm_70_rt.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\crt\sm_80_rt.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\crt\sm_90_rt.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\cuda_device_runtime_api.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\cuda_runtime.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\cuda_runtime_api.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\device_atomic_functions.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\device_launch_parameters.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\device_types.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\driver_functions.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\driver_types.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\library_types.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\nv\detail\__preprocessor
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\nv\detail\__target_macros
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\nv\target
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\sm_20_atomic_functions.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\sm_20_intrinsics.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\sm_30_intrinsics.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\sm_32_atomic_functions.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\sm_32_intrinsics.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\sm_35_atomic_functions.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\sm_35_intrinsics.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\sm_60_atomic_functions.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\sm_61_intrinsics.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\surface_indirect_functions.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\surface_types.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\texture_indirect_functions.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\texture_types.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\vector_functions.h
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\vector_functions.hpp
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\include\vector_types.h
+E:\development\BTCTimeSeries\mlmodel\include\utils.cuh
+E:\visualstudioide\VC\Tools\MSVC\14.38.33130\include\cmath
+E:\visualstudioide\VC\Tools\MSVC\14.38.33130\include\concurrencysal.h
+E:\visualstudioide\VC\Tools\MSVC\14.38.33130\include\crtdefs.h
+E:\visualstudioide\VC\Tools\MSVC\14.38.33130\include\cstddef
+E:\visualstudioide\VC\Tools\MSVC\14.38.33130\include\cstdint
+E:\visualstudioide\VC\Tools\MSVC\14.38.33130\include\cstdlib
+E:\visualstudioide\VC\Tools\MSVC\14.38.33130\include\initializer_list
+E:\visualstudioide\VC\Tools\MSVC\14.38.33130\include\limits.h
+E:\visualstudioide\VC\Tools\MSVC\14.38.33130\include\sal.h
+E:\visualstudioide\VC\Tools\MSVC\14.38.33130\include\stdint.h
+E:\visualstudioide\VC\Tools\MSVC\14.38.33130\include\type_traits
+E:\visualstudioide\VC\Tools\MSVC\14.38.33130\include\use_ansi.h
+E:\visualstudioide\VC\Tools\MSVC\14.38.33130\include\utility
+E:\visualstudioide\VC\Tools\MSVC\14.38.33130\include\vadefs.h
+E:\visualstudioide\VC\Tools\MSVC\14.38.33130\include\vcruntime.h
+E:\visualstudioide\VC\Tools\MSVC\14.38.33130\include\vcruntime_new.h
+E:\visualstudioide\VC\Tools\MSVC\14.38.33130\include\vcruntime_new_debug.h
+E:\visualstudioide\VC\Tools\MSVC\14.38.33130\include\vcruntime_string.h
+E:\visualstudioide\VC\Tools\MSVC\14.38.33130\include\xkeycheck.h
+E:\visualstudioide\VC\Tools\MSVC\14.38.33130\include\xtr1common
+E:\visualstudioide\VC\Tools\MSVC\14.38.33130\include\yvals.h
+E:\visualstudioide\VC\Tools\MSVC\14.38.33130\include\yvals_core.h

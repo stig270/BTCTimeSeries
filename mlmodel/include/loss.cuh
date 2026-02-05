@@ -37,12 +37,12 @@ __device__ inline void BCESoftmaxBackward(float* Y, float* P, float* dL_dZ, int 
 }
 
 
-__device__ inline void loadBalance(int* indices, float* loadBalance, int T, int E, int K){
-    const uint token = blockIdx.x;
+__device__ inline void loadBalance(float* loadBalance, int* indices, int T, int E, int K){
+    const int token = blockIdx.x;
 
     if(token < T){
 
-        float counts[E] = {0.0f};
+        float counts[4] = {0.0f};
 
         #pragma unroll  
         for(int i = 0; i<K ; ++i){

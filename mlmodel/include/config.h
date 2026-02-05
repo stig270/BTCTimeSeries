@@ -1,18 +1,21 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
+#include <vector>
+
+
 struct ModelHyperparameters {
-    int T = 32; // Sequence length
-    int C = 32; // Number of channels
-    int N = 4; // Number of heads (attention)
-    int H = C/N; // Head size (8)
-    int E = 4; // Number of experts (MoE)
-    int L = 4; // Number of layers
-    int F = 2; // Number of classes in the classifier
-    int K = 2; // Top-K experts to use in MoE
-    int B = 10000; // Base parameter for positional encoding
-    float epsilon = 1e-10; // Small constant for numerical stability in division operations
-}
+    const int T = 32; // Sequence length
+    const int C = 32; // Number of channels
+    const int N = 4; // Number of heads (attention)
+    const int H = C/N; // Head size (8)
+    const int E = 4; // Number of experts (MoE)
+    const int L = 4; // Number of layers
+    const int F = 2; // Number of classes in the classifier
+    const int K = 2; // Top-K experts to use in MoE
+    const int B = 10000; // Base parameter for positional encoding
+    const float epsilon = 1e-5f; // Small constant for numerical stability in division operations
+};
 
 struct ModelParameters{
     float* CLS; //CLS token, [C]
@@ -32,7 +35,7 @@ struct ModelParameters{
     float* moeb2; // [L, E, C]
     float* WCLS; // [C, F]
     float* BCLS; // [F]
-}
+};
 
 struct HostParameters{
     std::vector<float> CLS; //CLS token, [C]
@@ -52,7 +55,7 @@ struct HostParameters{
     std::vector<float> moeb2; // [L, E, C]
     std::vector<float> WCLS; // [C, F]
     std::vector<float> BCLS; // [F]
-}
+};
 
 struct ParameterSizes{
     size_t CLS; //CLS token, [C]
@@ -72,7 +75,7 @@ struct ParameterSizes{
     size_t moeb2; // [L, E, C]
     size_t WCLS; // [C, F]
     size_t BCLS; // [F]
-}
+};
 
 struct TrainingConfig {
     float weightDecay = 1e-5f; // Weight decay for regularization
@@ -83,16 +86,16 @@ struct TrainingConfig {
     float initialLR = 1e-3f; // Initial learning rate
     float lrMin = 1e-5f; // Minimum learning rate
     int warmupSteps = 100; // Learning rate warmup steps
-    int epochs = 1000; // Number of training epochs
-    int saveEvery = 200; // Save model every n steps
-    int logEvery = 10; // Log training metrics every n steps
-}
+    int epochs = 10; // Number of training epochs
+    int saveEvery = 20000; // Save model every n steps
+    int logEvery = 10000; // Log training metrics every n steps
+};
 
 struct IntermediateBuffers {
     float* theta;
+    float* RMS;
     float* attnNormX;
     float* attnNorm;
-    float* attnRMS;
     float* attnX;
     float* qkv;
     float* Q;
@@ -108,7 +111,6 @@ struct IntermediateBuffers {
     float* projY;
     float* moeNormX;
     float* moeNorm;
-    float* moeRMS;
     float* moeX;
     float* moeGate1;
     float* moeProbs1;
@@ -131,10 +133,10 @@ struct IntermediateBuffers {
     float* CLSNorm;
     float* ZNormCLS;
     float* ZCLS;
-}
+};
 
 struct BackpropagationBuffers{
-    float* dL_dXNormCLS;
+    float* dL_dXNorm;
     float* dL_dXCLS;
     float* loadBalance2;
     float* dL_dMoeY2;
@@ -178,18 +180,14 @@ struct BackpropagationBuffers{
     float* dL_dKT;
     float* dL_dKR;
     float* dL_dQR;
-    float* Qw; 
-    float* Kw; 
-    float* Vw; 
-    float* dL_dQCLS;
-    float* dL_dKCLS;
-    float* dL_dVCLS;
-}
+    float* dL_dqkv;
+    float* dL_dXtmp;
+};
 
 struct Parameter{
     float* parameter;
     float* gradient;
     float* velocity;
     float* momentum;
-}
+};
 #endif

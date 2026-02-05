@@ -6,13 +6,22 @@
 #include "model.h"
 #include "dataprocessing.h"
 
+void checkCudaError(const char* file, int line) {
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        std::cerr << "CUDA error at " << file << ":" << line << std::endl;
+        std::cerr << "Error code: " << err << std::endl;
+        std::cerr << "Error string: " << cudaGetErrorString(err) << std::endl;
+        exit(1);
+    } else {
+        std::cout << "No CUDA error at " << file << ":" << line << std::endl;
+    }
+}
 
 int main(int argc, char** argv) {
     std::string mode = "infer"; //default is inference
-    std::string modelPath = "model.bin";
     bool initParameters = false;
-
-    for(uint i = 1; i < argc; i++){
+    for(int i = 1; i < argc; i++){
         if(strcmp(argv[i], "train") == 0){
             mode = "train";
         }
@@ -25,8 +34,8 @@ int main(int argc, char** argv) {
     cudaDeviceProp prop;
     cudaGetDeviceProperties(&prop, 0);
 
-    ModelHyperparameters config = new ModelHyperparameters;
-    TrainingConfig trainConfig = new TrainingConfig;
+    const ModelHyperparameters config;
+    const TrainingConfig trainConfig;
 
 
     if(mode == "train"){
@@ -34,10 +43,10 @@ int main(int argc, char** argv) {
 
         DatasetSplitter splitter(data, 0.8f, config.T);
 
-        runTrainingLoop(config, trainConfig, modelPath.c_str(), data, splitter.train_timestamps, splitter.val_timestamps, initParameters);
+        runTrainingLoop(config, trainConfig, "model.bin", data, splitter.train_timestamps, splitter.val_timestamps, initParameters);
     }
     else{
-        runInference(config, modelPath.c_str(), "input.csv");
+        runInference(config, "model.bin", "input.csv");
     }
 
 

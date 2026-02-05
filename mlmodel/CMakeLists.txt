@@ -25,10 +25,15 @@ add_executable(mlmodel
     ${CPU_SOURCES}
     ${CUDA_SOURCES}
 )
-
+set_target_properties(mlmodel PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
+    CUDA_RESOLVE_DEVICE_SYMBOLS ON
+    LINK_FLAGS "-dlink"
+)
 target_link_libraries(mlmodel PRIVATE
     CUDA::cudart
     CUDA::curand
+    cudadevrt
 )
 
 target_compile_options(mlmodel PRIVATE
@@ -50,9 +55,10 @@ target_compile_options(mlmodel PRIVATE
 
 target_compile_options(mlmodel PRIVATE
     $<$<COMPILE_LANGUAGE:CUDA>:
-        --use_fast_math              
+        --use_fast_math   
+        -rdc=true           
         -Xcompiler=/W4               
-        $<$<CONFIG:Debug>:-G -g>     g
+        $<$<CONFIG:Debug>:-G -g>     
         $<$<CONFIG:Release>:-O3>     
     >
 )

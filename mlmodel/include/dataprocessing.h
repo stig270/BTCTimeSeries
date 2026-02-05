@@ -1,3 +1,6 @@
+#ifndef DATAPROCESSING_H
+#define DATAPROCESSING_H
+
 #include <vector>
 #include <string>
 #include <map>
@@ -36,7 +39,7 @@ public:
             DataPoint point;
             
             std::getline(ss, point.timestamp, ',');
-            
+            std::getline(ss, cell, ',');
             std::vector<std::string> cells;
             while (std::getline(ss, cell, ',')) {
                 cells.push_back(cell);
@@ -112,3 +115,5 @@ public:
                              all_timestamps.end());
     }
 };
+
+#endif

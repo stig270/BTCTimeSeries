@@ -4,6 +4,20 @@
     <ClCompile Include="E:\development\BTCTimeSeries\mlmodel\src\main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="E:\development\BTCTimeSeries\mlmodel\src\cpu\infer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="E:\development\BTCTimeSeries\mlmodel\src\cpu\params.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="E:\development\BTCTimeSeries\mlmodel\src\cpu\train.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CudaCompile Include="..\src\gpu\transformer.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="E:\development\BTCTimeSeries\mlmodel\CMakeLists.txt" />

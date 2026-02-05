@@ -3,101 +3,82 @@
 #include "utils.cuh"
 #include "linear.cuh"
 #include <cuda_runtime.h>
+#include <cooperative_groups.h>
 
-template<const uint BM, const uint BN, const uint BK, const uint TM, const uint TN>
-__device__ inline void RMSNormForward(float* X, float* XNorm, float* W, float* B, float* Z, float* RMS, int T, int C, float epsilon){
 
-    const uint vecPerRow = C / 4;
-    const uint row = blockidx.z;
-    const uint tid = threadidx.x;
-    const uint mask = (1u << vecPerRow) - 1;
+template<const int BM, const int BN, const int BK, const int TM, const int TN>
+__device__ inline void RMSNormForward(float* X, float* XNorm, float* W, float* B, float* Z, float* RMS, const int T, const int C, const float epsilon){
 
-    if (tid < vecPerRow && row < T) {
+    const int vecPerRow = C / 4;
+    const int row = blockIdx.z;
+    const int tid = threadIdx.x;
+    const int mask = (1u << vecPerRow) - 1;
+
+    if (row < T && blockIdx.x == 0 && blockIdx.y == 0){
             
-        float regX[4];
 
-        const float* Xrow = &X[row * C];
-
-        
-        reinterpret_cast<float4*>(regX)[0] = reinterpret_cast<const float4*>(&Xrow[tid * 4])[0];
-        
+        if(tid<vecPerRow){
+            alignas(16) float regX[4] = {0.0f};
 
 
-        const uint warpSize = 32;
-        const uint laneid = tid % warpSize;
+            
+            reinterpret_cast<float4*>(regX)[0] = reinterpret_cast<const float4*>(&X[row * C + tid * 4])[0];
+            
+            float sum = 0.0f;
+            
+            #pragma unroll
+            for(int i = 0; i < 4; i ++){
+                sum += regX[i] * regX[i];
+            }
+            
 
-        float sum = 0.0f;
-        
-        #pragma unroll
-        for(uint i = 0; i < 4; i ++){
-            sum += regX[i] * regX[i];
+            #pragma unroll
+            for(int offset = vecPerRow / 2; offset > 0; offset >>= 1){
+                sum += __shfl_down_sync(mask, sum, offset);
+            }
+
+
+            float rms;
+            if(tid == 0){
+                rms = rsqrtf(epsilon + sum / C);
+            }
+
+
+            rms = __shfl_sync(mask, rms, 0);
+
+            if(row == T-1){
+                RMS[0] = rms;
+            }
+
+            #pragma unroll
+            for(int i = 0; i < 4; i ++){
+                regX[i] *= rms;
+            }
+            
+
+            
+            
+            reinterpret_cast<float4*>(&XNorm[row * C + tid * 4])[0] = reinterpret_cast<const float4*>(regX)[0];
         }
-        
-
-        #pragma unroll
-        for(uint offset = vecPerRow / 2; offset > 0; offset >>= 1){
-            sum += __shfl_down_sync(mask, sum, offset);
-        }
-
-        float rms;
-        if(laneid == 0){
-            rms = rsqrtf(epsilon + sum / C);
-        }
-
-        rms = __shfl_sync(mask, rms, 0);
-
-        if(row = T-1){
-            RMS[row] = rms;
-        }
-
-        #pragma unroll
-        for(uint i = 0; i < 4; i ++){
-            regX[i] *= rms;
-        }
-        
-
-        float* XNormRow = &XNorm[row * C];
-        
-        
-        reinterpret_cast<float4*>(&XNormRow[tid * 4])[0] = reinterpret_cast<const float4*>(regX)[0];
-        
-
-        linearForward<BM, BN, BK, TM, TN>(
-            XNorm,
-            W,
-            B,
-            Z,
-            T,
-            C,
-            C,
-            1
-        );
+        __syncthreads();
 
     }
+    await();
+    linearForward<BM, BN, BK, TM, TN>(XNorm, W, B, Z, T, C, C, 1);
 
 
 }
 
-template<const uint BM, const uint BN, const uint BK, const uint TM, const uint TN>
+template<const int BM, const int BN, const int BK, const int TM, const int TN, const int TK>
 __device__ inline void RMSNormBackward(float* dL_dZ, float* dL_dXNorm, float* dL_dW, float* dL_dX, 
-    float* XNorm,float* W, float* RMS, int C, float epsilon){
+    float* XNorm,float* W, float RMS, const int C, const float epsilon){
 
-    linearBackward<BM, BN, BK, TM, TN>(
-        dL_dZ,
-        XNorm,
-        W,
-        dL_dXNorm,
-        dL_dW,
-        T,
-        C,
-        C,
-        1
-    );
+    linearBackward<BM, BN, BK, TM, TN, TK>(dL_dZ, XNorm, W, dL_dXNorm, dL_dW, 1, C, C, 1);
 
     float yg;
-    dotProduct(dL_dXNorm, XNorm, &yg, C);
+    dotProduct(dL_dXNorm, XNorm, &yg, C, 1, 1);
 
-    const uint tid = threadIdx.x;
+    const int tid = threadIdx.x;
     float regG[4];
     float regXNorm[4];
     if(tid < C / 4){
@@ -106,7 +87,7 @@ __device__ inline void RMSNormBackward(float* dL_dZ, float* dL_dXNorm, float* dL
         float dL_dX[4]; 
         #pragma unroll
         for(int i = 0; i < 4; i ++){
-            dL_dX[i] = (regG[i] - (yg * regXNorm[i]) / C) * RMS[0];
+            dL_dX[i] = (regG[i] - (yg * regXNorm[i]) / C) * RMS;
             
         }
         reinterpret_cast<float4*>(&dL_dX[tid * 4])[0] = reinterpret_cast<const float4*>(dL_dX)[0];

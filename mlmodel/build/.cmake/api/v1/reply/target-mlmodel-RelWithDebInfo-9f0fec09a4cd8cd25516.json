@@ -2,10 +2,10 @@
 	"artifacts" : 
 	[
 		{
-			"path" : "Release/mlmodel.exe"
+			"path" : "RelWithDebInfo/mlmodel.exe"
 		},
 		{
-			"path" : "Release/mlmodel.pdb"
+			"path" : "RelWithDebInfo/mlmodel.pdb"
 		}
 	],
 	"backtrace" : 1,
@@ -36,13 +36,13 @@
 			{
 				"command" : 1,
 				"file" : 0,
-				"line" : 29,
+				"line" : 33,
 				"parent" : 0
 			},
 			{
 				"command" : 2,
 				"file" : 0,
-				"line" : 34,
+				"line" : 56,
 				"parent" : 0
 			},
 			{
@@ -56,6 +56,12 @@
 				"file" : 0,
 				"line" : 13,
 				"parent" : 0
+			},
+			{
+				"command" : 2,
+				"file" : 0,
+				"line" : 39,
+				"parent" : 0
 			}
 		]
 	},
@@ -65,27 +71,15 @@
 			"compileCommandFragments" : 
 			[
 				{
-					"fragment" : "/DWIN32 /D_WINDOWS /GR /EHsc /O2 /Ob2 /DNDEBUG -std:c++17 -MD"
+					"fragment" : "/DWIN32 /D_WINDOWS /GR /EHsc /Zi /O2 /Ob1 /DNDEBUG -std:c++17 -MD"
 				},
 				{
-					"backtrace" : 3,
+					"backtrace" : 6,
 					"fragment" : "/W4"
 				},
 				{
-					"backtrace" : 3,
+					"backtrace" : 6,
 					"fragment" : "/permissive-"
-				},
-				{
-					"backtrace" : 3,
-					"fragment" : "/O2"
-				},
-				{
-					"backtrace" : 3,
-					"fragment" : "/Ob2"
-				},
-				{
-					"backtrace" : 3,
-					"fragment" : "/DNDEBUG"
 				}
 			],
 			"includes" : 
@@ -116,7 +110,60 @@
 			},
 			"sourceIndexes" : 
 			[
-				0
+				0,
+				1,
+				2,
+				3
+			]
+		},
+		{
+			"compileCommandFragments" : 
+			[
+				{
+					"fragment" : "-D_WINDOWS -Xcompiler=\" /GR /EHsc\" -Xcompiler=\" -Zi -O2 -Ob1\" -DNDEBUG -std=c++17 \"--generate-code=arch=compute_75,code=[compute_75,sm_75]\" -Xcompiler=-MD"
+				},
+				{
+					"backtrace" : 3,
+					"fragment" : "--use_fast_math"
+				},
+				{
+					"backtrace" : 3,
+					"fragment" : "-rdc=true"
+				},
+				{
+					"backtrace" : 3,
+					"fragment" : "-Xcompiler=/W4"
+				}
+			],
+			"includes" : 
+			[
+				{
+					"backtrace" : 4,
+					"path" : "E:/development/BTCTimeSeries/mlmodel/include"
+				},
+				{
+					"backtrace" : 5,
+					"isSystem" : true,
+					"path" : "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include"
+				},
+				{
+					"backtrace" : 5,
+					"isSystem" : true,
+					"path" : "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/include/cccl"
+				}
+			],
+			"language" : "CUDA",
+			"languageStandard" : 
+			{
+				"backtraces" : 
+				[
+					1
+				],
+				"standard" : "17"
+			},
+			"sourceIndexes" : 
+			[
+				4
 			]
 		}
 	],
@@ -132,12 +179,16 @@
 		"commandFragments" : 
 		[
 			{
-				"fragment" : "/DWIN32 /D_WINDOWS /GR /EHsc /O2 /Ob2 /DNDEBUG -MD",
+				"fragment" : "/DWIN32 /D_WINDOWS /GR /EHsc /Zi /O2 /Ob1 /DNDEBUG -MD",
 				"role" : "flags"
 			},
 			{
-				"fragment" : "/machine:x64 /INCREMENTAL:NO /subsystem:console",
+				"fragment" : "/machine:x64 /debug /INCREMENTAL /subsystem:console -dlink",
 				"role" : "flags"
+			},
+			{
+				"fragment" : "-LIBPATH:\"C:\\PROGRA~1\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0\\lib\\x64\"",
+				"role" : "libraryPath"
 			},
 			{
 				"backtrace" : 2,
@@ -147,6 +198,19 @@
 			{
 				"backtrace" : 2,
 				"fragment" : "\"C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0\\lib\\x64\\curand.lib\"",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 2,
+				"fragment" : "cudadevrt.lib",
+				"role" : "libraries"
+			},
+			{
+				"fragment" : "cudadevrt.lib",
+				"role" : "libraries"
+			},
+			{
+				"fragment" : "cudart_static.lib",
 				"role" : "libraries"
 			},
 			{
@@ -169,7 +233,11 @@
 			"name" : "Source Files",
 			"sourceIndexes" : 
 			[
-				0
+				0,
+				1,
+				2,
+				3,
+				4
 			]
 		}
 	],
@@ -179,6 +247,30 @@
 			"backtrace" : 1,
 			"compileGroupIndex" : 0,
 			"path" : "src/main.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "src/cpu/infer.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "src/cpu/params.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "src/cpu/train.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "src/gpu/transformer.cu",
 			"sourceGroupIndex" : 0
 		}
 	],
