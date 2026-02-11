@@ -68,19 +68,23 @@ __device__ inline void softmaxBackward(float* dL_dY, float* Y, float* J,  float*
     const int offset = (head * T + row) * C;
 
     dotProduct(Y, dL_dY, J, C, T, N); 
-    if(tid < (C / 4) && head < N && row < T){
-        float regdL_dY[4];
-        float regY[4];
-        float regdL_dX[4] = {0.0f};
-        reinterpret_cast<float4*>(regdL_dY)[0] = reinterpret_cast<float4*>(&dL_dY[offset + tid * 4])[0];
-        reinterpret_cast<float4*>(regY)[0] = reinterpret_cast<float4*>(&Y[offset + tid * 4])[0];
-        #pragma unroll
-        for(int i = 0; i < 4; ++i){
-            regdL_dX[i] = regY[i] * (regdL_dY[i] - J[(offset)]);
-        }
+    if(head < N && row < T && blockIdx.y == 0){
+        if(tid < C/4 && threadIdx.y == 0){
+            alignas(16) float regdL_dY[4];
+            alignas(16) float regY[4];
+            alignas(16)float regdL_dX[4] = {0.0f};
+            reinterpret_cast<float4*>(regdL_dY)[0] = reinterpret_cast<float4*>(&dL_dY[offset + tid * 4])[0];
+            reinterpret_cast<float4*>(regY)[0] = reinterpret_cast<float4*>(&Y[offset + tid * 4])[0];
+            #pragma unroll
+            for(int i = 0; i < 4; ++i){
+                regdL_dX[i] = regY[i] * (regdL_dY[i] - J[(offset)]);
+            }
 
-        reinterpret_cast<float4*>(&dL_dX[offset + tid * 4])[0] = reinterpret_cast<float4*>(regdL_dX)[0];
+            reinterpret_cast<float4*>(&dL_dX[offset + tid * 4])[0] = reinterpret_cast<float4*>(regdL_dX)[0];
+        }
+        __syncthreads();
     }
+    await();
 }
 
 

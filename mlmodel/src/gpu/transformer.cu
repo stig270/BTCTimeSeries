@@ -23,7 +23,7 @@ __global__ void calculateTheta(float* theta, int T, int H, int B){
     int token = blockIdx.x;
     int tid = threadIdx.x;
     if(token > T && tid > H / 2) return;
-    theta[token * H/2 + tid] = token * powf(B,  2 * (float)tid / H);
+    theta[token * H/2 + tid] = token * powf(B,  -2 * (float)tid / H);
 }
 
 __global__ void classifierForward(float* X, float* XNorm, float* WNorm, float* BNorm, float* ZNorm, float* W, float* B, float* Z, float* Y, float* RMS,
@@ -37,12 +37,12 @@ __global__ void classifierForward(float* X, float* XNorm, float* WNorm, float* B
 }
 
 __global__ void classifierBackward(float* Y, float* P, float* dL_dZCLS, float* dL_dW, float* dL_dZNormCLS, float* ZNorm,
-     float* W, float* dL_dXNorm, float* XNorm, float* WNorm, float* dL_dWNorm, float RMS, float* dL_dX, const int C, const int F, const float epsilon){
+     float* W, float* dL_dXNorm, float* XNorm, float* WNorm, float* dL_dWNorm, float* RMS, float* dL_dX, const int C, const int F, const float epsilon){
     
 
     BCESoftmaxBackward(Y, P, dL_dZCLS, F);
     simpleLinearBackward(dL_dZCLS, dL_dW, dL_dZNormCLS, ZNorm, W, 1, F, C);
-    RMSNormBackward<1, 16, 16, 1, 4, 4>(dL_dZNormCLS, dL_dXNorm, dL_dWNorm, dL_dX, XNorm, W, RMS, C, epsilon);
+    RMSNormBackward<1, 8, 16, 1, 4, 4>(dL_dZNormCLS, dL_dXNorm, dL_dWNorm, dL_dX, XNorm, W, RMS[0], C, epsilon);
 }
 
 __global__ void flashAttentionForward(float* X, float* attnNorm, float* WNorm1, float* BNorm1, float* attnX, float* Y, float* RMS1, 
@@ -80,10 +80,10 @@ __global__ void flashAttentionForward(float* X, float* attnNorm, float* WNorm1, 
 
 __global__ void flashAttentionBackward(const AttentionBuffers& buffers, const AttentionParams& params, AttentionParams& gradients,
     AttentionBackBuffers& backBuffers, float* dL_dAttnX, float* dL_dXNorm, float* dL_dX, float* XNorm,
-     float* AttnX, float RMS, float* dL_dWNorm, float* WNorm, const int C, const int N, const int H, const int T, const float epsilon){
+     float* AttnX, float* RMS, float* dL_dWNorm, float* WNorm, const int C, const int N, const int H, const int T, const float epsilon){
     
     attentionBackward(buffers, params, gradients, backBuffers, AttnX, dL_dAttnX, C, N, H, T);
-    RMSNormBackward<1, 16, 16, 1, 4, 4>(dL_dAttnX, dL_dXNorm, dL_dWNorm, dL_dX, XNorm, WNorm, RMS, C, epsilon);
+    RMSNormBackward<1, 8, 16, 1, 4, 4>(dL_dAttnX, dL_dXNorm, dL_dWNorm, dL_dX, XNorm, WNorm, RMS[0], C, epsilon);
 }
 
 __global__ void fusedSparsemoeForward(float* X, float* Y, float* moeHidden,
@@ -132,7 +132,7 @@ __global__ void fusedSparsemoeForward(float* X, float* Y, float* moeHidden,
 __global__ void fusedSparseMoeBackward(SparseMoeBuffers& moeBuffers2, SparseMoeParams& moeParams2, SparseMoeParams& moeGradients2, SparseMoeBackBuffers& moeBackBuffers2,
      SparseMoeBuffers& moeBuffers1, SparseMoeParams& moeParams1, SparseMoeParams& moeGradients1, SparseMoeBackBuffers& moeBackBuffers1,
      float* dL_dmoeY2, float* dL_dmoeY1, float* dL_dmoeHidden, float* loadBalance2, float* loadBalance1, float* dL_dX,
-     float RMS, float* dL_dWNorm, float* WNorm, float* dL_dXNorm, float* XNorm, float* dL_dBNorm, float* moeHidden, float* moeX,
+     float* RMS, float* dL_dWNorm, float* WNorm, float* dL_dXNorm, float* XNorm, float* dL_dBNorm, float* moeHidden, float* moeX,
      const float alpha, const float beta, const int C, const int E, const int K, const int T, const float epsilon){
 
     loadBalance(loadBalance2, moeBuffers2.indices, T, E, K);
@@ -145,7 +145,7 @@ __global__ void fusedSparseMoeBackward(SparseMoeBuffers& moeBuffers2, SparseMoeP
     alignas(16) float regY[4];
     alignas(16) float regGrad[4];
     int tid = threadIdx.x;
-    if(tid < C){
+    if(tid < C && threadIdx.y == 0 && blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0){
         reinterpret_cast<float4*>(&regY)[0] = reinterpret_cast<float4*>(&moeBuffers1.Y[tid * 4])[0];
         reinterpret_cast<float4*>(&regGrad)[0] = reinterpret_cast<float4*>(&dL_dmoeHidden[tid * 4])[0];
         #pragma unroll
@@ -154,9 +154,10 @@ __global__ void fusedSparseMoeBackward(SparseMoeBuffers& moeBuffers2, SparseMoeP
         }
         reinterpret_cast<float4*>(&dL_dmoeY1[tid * 4])[0] = reinterpret_cast<float4*>(&regX)[0];
     }
+    __syncthreads();
     await();
     sparseMoeBackward(dL_dmoeY1, dL_dBNorm, moeX, moeBuffers1, moeParams1, moeGradients1, moeBackBuffers1, loadBalance1, alpha, beta, C, C * 4, E, K);
-    RMSNormBackward<1, 16, 16, 1, 4, 4>(dL_dBNorm, dL_dXNorm, dL_dWNorm, dL_dX, XNorm, WNorm, RMS, C, epsilon);
+    RMSNormBackward<1, 8, 16, 1, 4, 4>(dL_dBNorm, dL_dXNorm, dL_dWNorm, dL_dX, XNorm, WNorm, RMS[0], C, epsilon);
 }
 
 __global__ void optimizer(ModelParameters& params, ModelParameters& gradients, ModelParameters& velocity, ModelParameters& momentum,
@@ -311,7 +312,7 @@ __global__ void optimizer(ModelParameters& params, ModelParameters& gradients, M
         momentum.WCLS
     };
 
-    optimizerStep(WCLS, learningRate, beta1, beta2, epsilon, l2Lambda, time, C, 1, 1, F);
+    optimizerStep(WCLS, learningRate, beta1, beta2, epsilon, l2Lambda, time, 1, 1, C, F);
 
     Parameter BCLS{
         params.BCLS,
@@ -506,18 +507,20 @@ void transformerBackward(ModelParameters& params, ModelParameters& gradients, Mo
 
 
 
-    dim3 gridDim(1, C, C);
-    dim3 blockDim(C, 1, 1);
+    dim3 gridDim(1, C/16, C/16);
+    dim3 blockDim(C, C, 1);
     classifierBackward<<<gridDim, blockDim>>>(
         Y, P, gradients.BCLS, gradients.WCLS, gradients.BNorm + 2*L * C, buffers.ZNormCLS,
-        params.WCLS, backbuffers.dL_dXNorm + 2*L, buffers.decoderY + (T - 1) * C, params.WNorm + 2*L * C * C,
-        gradients.WNorm + 2*L * C * C, buffers.RMS[2*L], backbuffers.dL_dMoeY2 + (L - 1) * C,  C, F, epsilon
+        params.WCLS, backbuffers.dL_dXNorm + 2*L * C, buffers.decoderY + (T - 1) * C, params.WNorm + 2*L * C * C,
+        gradients.WNorm + 2*L * C * C, buffers.RMS + 2*L, backbuffers.dL_dMoeY2 + (L - 1) * C,  C, F, epsilon
     );
+    printf("Finished classifier backward\n");
 
     cudaDeviceSynchronize();
 
-    dim3 moeGrid(E, 4*C, 4*C);
-    dim3 moeBlock(C, 1, 1);
+    printf("Device synchronized after classifier backward\n ");
+    dim3 moeGrid(E, C/16, C/16);
+    dim3 moeBlock(C, C, 1);
 
     SparseMoeBuffers* moeBuffers1;
     cudaMallocManaged(&moeBuffers1, sizeof(SparseMoeBuffers));
@@ -543,8 +546,8 @@ void transformerBackward(ModelParameters& params, ModelParameters& gradients, Mo
     SparseMoeBackBuffers* moeBackBuffers2;
     cudaMallocManaged(&moeBackBuffers2, sizeof(SparseMoeBackBuffers));
 
-    dim3 attnGrid(N, C, T);
-    dim3 attnBlock(C, 1, 1); 
+    dim3 attnGrid(N, C/16, T);
+    dim3 attnBlock(C, C, 1); 
 
     AttentionBuffers* attnBuffers;
     cudaMallocManaged(&attnBuffers, sizeof(AttentionBuffers));
@@ -557,7 +560,10 @@ void transformerBackward(ModelParameters& params, ModelParameters& gradients, Mo
 
     AttentionBackBuffers* attnBackBuffers;
     cudaMallocManaged(&attnBackBuffers, sizeof(AttentionBackBuffers));
-
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {   
+        printf("CUDA error after malloc: %s\n", cudaGetErrorString(err));
+    }
     for(int l = L - 1; l >= 0; --l){
 
 
@@ -566,8 +572,8 @@ void transformerBackward(ModelParameters& params, ModelParameters& gradients, Mo
             buffers.moeProbs1 + l * T * E + (T - 1) * E,
             buffers.moeSorted1 + l * T * E + (T - 1) * E,
             buffers.moeIndices1 + l * T * E,
-            buffers.moeW1 + l * K * T * C * C * 4 + (T - 1) * C * C * 4,
-            buffers.moeB1 + l * K * T * C * 4 + (T - 1) * C * 4,
+            buffers.moeW1 + l * K * T * C * C * 4 + (T - 1) * K * C * C * 4,
+            buffers.moeB1 + l * K * T * C * 4 + (T - 1) * K * C * 4,
             buffers.moeExperts1 + l * T * K * C * 4 + (T - 1) * K * C * 4,
             buffers.moeY1 + l * T * C * 4 + (T - 1) * C * 4
         };
@@ -598,7 +604,7 @@ void transformerBackward(ModelParameters& params, ModelParameters& gradients, Mo
             backbuffers.dL_dG1 + l * E,
             backbuffers.dG_dX1 + l * K * C,
             backbuffers.dG_dZ1 + l * E,
-            backbuffers.dL_dXtmp1 + l * K * C * 4,
+            backbuffers.dL_dXtmp1 + l * K * C,
             backbuffers.dL_dXsum1 + l * C
         };
 
@@ -607,8 +613,8 @@ void transformerBackward(ModelParameters& params, ModelParameters& gradients, Mo
             buffers.moeProbs2 + l * T * E + (T - 1) * E,
             buffers.moeSorted2 + l * T * E + (T - 1) * E,
             buffers.moeIndices2 + l * T * E,
-            buffers.moeW2 + l * K * T * C * C * 4 + (T - 1) * C * C * 4,
-            buffers.moeB2 + l * K * T * C + (T - 1) * C,
+            buffers.moeW2 + l * K * T * C * C * 4 + (T - 1) * K * C * C * 4,
+            buffers.moeB2 + l * K * T * C + (T - 1) * K * C,
             buffers.moeExperts2 + l * T * K * C + (T - 1) * K * C,
             buffers.moeY2 + l * T * C + (T - 1) * C 
         };
@@ -628,13 +634,13 @@ void transformerBackward(ModelParameters& params, ModelParameters& gradients, Mo
         };
 
         *moeBackBuffers2 = {
-            backbuffers.Xtmp2 + l * C * 4,
+            backbuffers.Xtmp2 + l * K * C * 4,
             backbuffers.dL_dWtmp2 + l * K * C * 4 * C,
             backbuffers.dL_dBtmp2 + l * K * C,
             backbuffers.dE_dX2 + l * K * C * 4,
             backbuffers.Wtmp2 + l * K * C * 4 * C,
             backbuffers.Etmp2 + l * K * C,
-            backbuffers.EMA2 + l * C, 
+            backbuffers.EMA2 + l * E * C, 
             backbuffers.J2 + l,
             backbuffers.dL_dG2 + l * E,
             backbuffers.dG_dX2 + l * K * C * 4,
@@ -642,18 +648,27 @@ void transformerBackward(ModelParameters& params, ModelParameters& gradients, Mo
             backbuffers.dL_dXtmp2 + l * K * C * 4,
             backbuffers.dL_dXsum2 + l * C * 4
         };
+        err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            printf("CUDA error after setting up MoE buffers at layer %d: %s\n", l, cudaGetErrorString(err));
+        }
+        printf("layer %d\n", l);
 
         fusedSparseMoeBackward<<<moeGrid, moeBlock>>>(
             *moeBuffers2, *moeParams2, *moeGradients2, *moeBackBuffers2, *moeBuffers1, *moeParams1, *moeGradients1, *moeBackBuffers1,
             backbuffers.dL_dMoeY2 + l * C, backbuffers.dL_dMoeY1 + l * C * 4, backbuffers.dL_dMoeHidden + l * C * 4,
             backbuffers.loadBalance2 + l * E, backbuffers.loadBalance1 + l * E, gradients.projB + l * C,
-            buffers.RMS[2*l + 1], gradients.WNorm + (2* l + 1) * C * C, params.WNorm + (2* l + 1) * C * C,
+            buffers.RMS + 2*l + 1, gradients.WNorm + (2* l + 1) * C * C, params.WNorm + (2* l + 1) * C * C,
              backbuffers.dL_dXNorm + (2 * l + 1) * C, buffers.moeNorm + l * C, gradients.BNorm + (2*l + 1) * C,
               buffers.moeHidden + l * C * 4, buffers.moeX + l * C, alpha, beta, C, E, K, T, epsilon
         );
-         
-    cudaDeviceSynchronize();
-
+        err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            printf("CUDA error in fusedSparseMoeBackward at layer %d: %s\n", l, cudaGetErrorString(err));
+        }
+        printf("Finished MoE layer %d backward\n", l);
+        cudaDeviceSynchronize();
+        printf("Device sync\n");    
         *attnBuffers = {
             buffers.qkv + l * N * T * H * 3,
             buffers.Q + l * N * T * H,
@@ -700,17 +715,19 @@ void transformerBackward(ModelParameters& params, ModelParameters& gradients, Mo
             flashAttentionBackward<<<attnGrid, attnBlock>>>(
                 *attnBuffers, *attnParams, *attnGradients, *attnBackBuffers,
                 gradients.BNorm + 2*l * C, backbuffers.dL_dXNorm + l * C, gradients.CLS, buffers.attnNorm + l * C,
-                buffers.attnX + l * C, buffers.RMS[2*l], gradients.WNorm + 2*l * C * C, params.WNorm + 2*l * C * C, C, N, H, T, epsilon
+                buffers.attnX + l * C, buffers.RMS + 2*l, gradients.WNorm + 2*l * C * C, params.WNorm + 2*l * C * C, C, N, H, T, epsilon
             );
         }
         else{
             flashAttentionBackward<<<attnGrid, attnBlock>>>(
                 *attnBuffers, *attnParams, *attnGradients, *attnBackBuffers,
                 gradients.BNorm + 2*l * C, backbuffers.dL_dXNorm + l * C, backbuffers.dL_dMoeY2 + (l - 1) * C, buffers.attnNorm + l * C,
-                buffers.attnX + l * C, buffers.RMS[2*l], gradients.WNorm + 2*l * C * C, params.WNorm + 2*l * C * C, C, N, H, T, epsilon
+                buffers.attnX + l * C, buffers.RMS + 2*l, gradients.WNorm + 2*l * C * C, params.WNorm + 2*l * C * C, C, N, H, T, epsilon
             );
         }
+        printf("Finished attention layer %d backward\n", l);
         cudaDeviceSynchronize();
+        printf("Device sync\n");
 
     }
     cudaFree(attnBuffers);
@@ -726,9 +743,10 @@ void transformerBackward(ModelParameters& params, ModelParameters& gradients, Mo
     cudaFree(moeGradients2);
     cudaFree(moeBackBuffers2);
 
-    dim3 optimGrid(C, 4*C, 4*C);
+    dim3 optimGrid(2 * L + 1, 4*C, 4*C);
     dim3 optimBlock(4*C, 1, 1);
     optimizer<<<optimGrid, optimBlock>>>(params, gradients, velocity, momentum, config, learningRate, beta1, beta2, l2Lambda, time, epsilon);
+    printf("Finished optimizer step\n");
 }
 
 

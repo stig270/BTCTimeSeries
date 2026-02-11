@@ -79,12 +79,12 @@ __device__ inline void RMSNormBackward(float* dL_dZ, float* dL_dXNorm, float* dL
     dotProduct(dL_dXNorm, XNorm, &yg, C, 1, 1);
 
     const int tid = threadIdx.x;
-    float regG[4];
-    float regXNorm[4];
-    if(tid < C / 4){
+    alignas(16) float regG[4];
+    alignas(16) float regXNorm[4];
+    if(tid < C / 4 && threadIdx.y == 0 && blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0){
         reinterpret_cast<float4*>(regG)[0] = reinterpret_cast<const float4*>(&dL_dXNorm[tid * 4])[0];
         reinterpret_cast<float4*>(regXNorm)[0] = reinterpret_cast<const float4*>(&XNorm[tid * 4])[0];
-        float dL_dX[4]; 
+        alignas(16) float dL_dX[4]; 
         #pragma unroll
         for(int i = 0; i < 4; i ++){
             dL_dX[i] = (regG[i] - (yg * regXNorm[i]) / C) * RMS;
@@ -92,5 +92,7 @@ __device__ inline void RMSNormBackward(float* dL_dZ, float* dL_dXNorm, float* dL
         }
         reinterpret_cast<float4*>(&dL_dX[tid * 4])[0] = reinterpret_cast<const float4*>(dL_dX)[0];
     }
+    __syncthreads();
+    await();
 }
 #endif

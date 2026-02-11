@@ -7,7 +7,7 @@
 
 __global__ void binaryCrossEntropyLossForward(float* Y, float* P, float* loss,  int F, float epsilon){
    int tid = threadIdx.x;
-   if(tid < F){
+   if(tid < F && threadIdx.y == 0 && blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0){
        float y = Y[tid];
        float p = P[tid];
        float l = - (y * logf(p + epsilon) + (1 - y) * logf(1 - p + epsilon));
@@ -19,28 +19,33 @@ __global__ void binaryCrossEntropyLossForward(float* Y, float* P, float* loss,  
 
 __device__ inline void binaryCrossEntropyLossBackward(float* Y, float* P, float* dL_dP, int F, float epsilon){
     int tid = threadIdx.x;
-    if(tid < F){
+    if(tid < F && threadIdx.y == 0 && blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0){
         float y = Y[tid];
         float p = P[tid];
         dL_dP[tid] = - (y / (p + epsilon)) + ((1 - y) / (1 - p + epsilon));
     }
+    
 }
 
 // much simpler than BCE with softmax Jacobian
 __device__ inline void BCESoftmaxBackward(float* Y, float* P, float* dL_dZ, int F){
     int tid = threadIdx.x;
-    if(tid < F){
-        float y = Y[tid];
-        float p = P[tid];
-        dL_dZ[tid] = F * (p - y);
+    if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0){
+        if(threadIdx.y == 0 && tid < F){
+            float y = Y[tid];
+            float p = P[tid];
+            dL_dZ[tid] = F * (p - y);
+        }
+        __syncthreads();
     }
+    await();
 }
 
 
 __device__ inline void loadBalance(float* loadBalance, int* indices, int T, int E, int K){
     const int token = blockIdx.x;
 
-    if(token < T){
+    if(token < T && threadIdx.x == 0 && threadIdx.y == 0 && blockIdx.y == 0 && blockIdx.z == 0){
 
         float counts[4] = {0.0f};
 
@@ -54,5 +59,6 @@ __device__ inline void loadBalance(float* loadBalance, int* indices, int T, int 
             atomicAdd(&loadBalance[i], counts[i] / T);
         }
     }
+    await();
 }   
 #endif

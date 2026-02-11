@@ -76,10 +76,10 @@ __device__ inline void sparseMoeForward(float* X, const SparseMoeBuffers& buffer
     await();
     
     if(Cout > Cin){
-        linearForward<1, 128, 8, 1, 8>(X, buffers.W, buffers.B, buffers.experts,  1,  K * Cout, Cin, T);
+        linearForward<1, 128, 8, 1, 32>(X, buffers.W, buffers.B, buffers.experts,  1,  K * Cout, Cin, T);
     }
     else{
-        linearForward<1, 64, 16, 1, 4>(X, buffers.W, buffers.B, buffers.experts,  1,  K * Cout, Cin, T);
+        linearForward<1, 64, 16, 1, 16>(X, buffers.W, buffers.B, buffers.experts,  1,  K * Cout, Cin, T);
     }    
     __shared__ float sortedShared[4];
     if(token < T && blockIdx.y == 0 && blockIdx.z == 0){
@@ -119,140 +119,158 @@ __device__ inline void sparseMoeBackward(float* dL_dY, float* dL_dX, float* X, c
       const int Cin, const int Cout, const int E, const int K){
     
     const int expert = blockIdx.x;
-    const int row = blockIdx.y;
-    const int col = blockIdx.z;
     const int tid = threadIdx.x;    
-    int expertIdx = buffers.indices[expert];
+    const int expertIdx = buffers.indices[expert];
 
     
-    if(expert < K && tid < Cout/4){
-        float gradY[4] = {0.0f};
-        float gradB[4] = {0.0f};
-        float gy = buffers.probs[expert];
+    if(expert < K && blockIdx.y == 0 && blockIdx.z == 0){
+        if(tid < Cout/4 && threadIdx.y == 0){
+            alignas(16) float gradY[4] = {0.0f};
+            alignas(16)float gradB[4] = {0.0f};
+            float gy = buffers.probs[expert];
 
-        reinterpret_cast<float4*>(gradY)[0] = reinterpret_cast<float4*>(&dL_dY[4 * tid])[0];
+            reinterpret_cast<float4*>(gradY)[0] = reinterpret_cast<float4*>(&dL_dY[4 * tid])[0];
 
-        #pragma unroll
-        for(int i = 0; i < 4; ++i){
-            gradB[i] = gradY[i] * gy;
+            #pragma unroll
+            for(int i = 0; i < 4; ++i){
+                gradB[i] = gradY[i] * gy;
+            }
+
+            reinterpret_cast<float4*>(&backBuffers.dL_dBtmp[expert * Cout + 4 * tid])[0] = reinterpret_cast<float4*>(&gradB)[0];
+            reinterpret_cast<float4*>(&gradients.b[expertIdx * Cout + 4 * tid])[0] = reinterpret_cast<float4*>(&gradB)[0];
+                        
+            for(int i = 0; i < Cin; ++i){
+                reinterpret_cast<float4*>(&backBuffers.Wtmp[expert * Cin * Cout + i * Cout + 4 * tid])[0] =
+                    reinterpret_cast<float4*>(&params.w[expertIdx * Cin * Cout + i * Cout + 4 * tid])[0];
+            }
         }
+        __syncthreads();
+        if(tid<Cin/4 && threadIdx.y == 0){
+            reinterpret_cast<float4*>(&backBuffers.Xtmp[expert * Cin + 4 * tid])[0] = reinterpret_cast<float4*>(&X[4 * tid])[0];
+        }
+        __syncthreads();
+    }
+    await();
 
-        reinterpret_cast<float4*>(&backBuffers.dL_dBtmp[expert * Cout + 4 * tid])[0] = reinterpret_cast<float4*>(&gradB)[0];
-        reinterpret_cast<float4*>(&gradients.b[expertIdx * Cout + 4 * tid])[0] = reinterpret_cast<float4*>(&gradB)[0];
-                  
-    
+    if(Cout > Cin){
+        linearBackward<1, 64, 16, 1, 8, 4>(backBuffers.dL_dBtmp, backBuffers.dL_dWtmp, backBuffers.dE_dX, backBuffers.Xtmp, backBuffers.Wtmp, 1, Cout, Cin, K);
+    }
+    else{
+        linearBackward<1, 16, 64, 1, 4, 8>(backBuffers.dL_dBtmp, backBuffers.dL_dWtmp, backBuffers.dE_dX, backBuffers.Xtmp, backBuffers.Wtmp, 1, Cout, Cin, K);
+    }
+
+    if(expert < K && blockIdx.y == 0 && blockIdx.z == 0){    
+        if(tid < Cout/4 && threadIdx.y == 0){
+            for(int i = 0; i < Cin; ++i){
+                reinterpret_cast<float4*>(&gradients.w[expertIdx * Cin * Cout + i * Cout + 4 * tid])[0] = 
+                    reinterpret_cast<float4*>(&backBuffers.dL_dWtmp[expert * Cin * Cout + i * Cout + 4 * tid])[0];
+            }
+            reinterpret_cast<float4*>(&backBuffers.Etmp[expert * Cout + 4 * tid])[0] = reinterpret_cast<float4*>(&buffers.experts[expertIdx * Cout + 4 * tid])[0];
+
+            alignas(16) float ema[4] = {0.0f};
+            alignas(16)float expEma[4] = {0.0f};
+            reinterpret_cast<float4*>(&ema)[0] = reinterpret_cast<float4*>(&backBuffers.EMA[expertIdx * Cout + 4 * tid])[0];
+            reinterpret_cast<float4*>(&expEma)[0] = reinterpret_cast<float4*>(&backBuffers.Etmp[expertIdx * Cout + 4 * tid])[0];
+
+            #pragma unroll
+            for(int i = 0; i < 4; ++i){
+                ema[i] = beta * ema[i] + (1 - beta) * expEma[i];
+            }
+            reinterpret_cast<float4*>(&backBuffers.EMA[expertIdx * Cout + 4 * tid])[0] = reinterpret_cast<float4*>(&ema)[0];
+        }
         __syncthreads();
     
-        reinterpret_cast<float4*>(&backBuffers.Xtmp[expert * Cin + 4 * tid])[0] = reinterpret_cast<float4*>(&X[4 * tid])[0];
-        reinterpret_cast<float4*>(&backBuffers.Wtmp[expert * Cin * Cout + row * Cout + 4 * tid])[0] = reinterpret_cast<float4*>(&params.w[expertIdx * Cin * Cout + row * Cout + 4 * tid])[0];
     }
-    
-    linearBackward<1, 16, 16, 1, 4, 4>(backBuffers.dL_dBtmp, backBuffers.dL_dWtmp, backBuffers.dE_dX, backBuffers.Xtmp, backBuffers.Wtmp, 1, Cout, Cin, K);
-
-    if(expert < K && tid < Cout/4){    
-        reinterpret_cast<float4*>(&gradients.w[expertIdx * Cin * Cout + row * Cout + 4 * tid])[0] = reinterpret_cast<float4*>(&backBuffers.Wtmp[expert * Cin * Cout + row * Cout + 4 * tid])[0];
-
-        reinterpret_cast<float4*>(&backBuffers.Etmp[expert * Cout + 4 * tid])[0] = reinterpret_cast<float4*>(&buffers.experts[expertIdx * Cout + 4 * tid])[0];
-
-        float ema[4] = {0.0f};
-        float expEma[4] = {0.0f};
-        reinterpret_cast<float4*>(&ema)[0] = reinterpret_cast<float4*>(&backBuffers.EMA[expertIdx * Cout + 4 * tid])[0];
-        reinterpret_cast<float4*>(&expEma)[0] = reinterpret_cast<float4*>(&backBuffers.Etmp[expertIdx * Cout + 4 * tid])[0];
-
-        #pragma unroll
-        for(int i = 0; i < 4; ++i){
-            ema[i] = beta * ema[i] + (1 - beta) * expEma[i];
-        }
-        reinterpret_cast<float4*>(&backBuffers.EMA[expertIdx * Cout + 4 * tid])[0] = reinterpret_cast<float4*>(&ema)[0];
-
-        __syncthreads();
-    
-    }
+    await();
 
 
     sgemm<1, 4, 16, 1, 4>(dL_dY, backBuffers.EMA, backBuffers.dL_dG, 1.0f, 0.0f, 1, E, Cout, 1);
     softmaxBackward(backBuffers.dL_dG, buffers.probs, backBuffers.J, gradients.gb, E, 1, 1);
-    sgemm_naive(X, gradients.gb, gradients.gw, 1.0f, 0.0f, Cin, E, 1, 1);
 
-    if(expert == 0 && tid < E/4){
-        float gb[4] = {0.0f};
-        float lb[4] = {0.0f};
-        reinterpret_cast<float4*>(&gb)[0] = reinterpret_cast<float4*>(&gradients.gb[4 * tid])[0];
-        reinterpret_cast<float4*>(&lb)[0] = reinterpret_cast<float4*>(&loadBalance[4 * tid])[0];
-        #pragma unroll
-        for(int i = 0; i < 4; ++i){
-            gb[i] += lb[i] * alpha;
-        }
-
-        reinterpret_cast<float4*>(&gradients.gb[4 * tid])[0] = reinterpret_cast<float4*>(&gb)[0];
-        float gate[4] = {0.0f};
-        float dG_dZ[4] = {0.0f};
-        reinterpret_cast<float4*>(&gate)[0] = reinterpret_cast<float4*>(&buffers.probs[4 * tid])[0];
-        for(int i = 0; i < E; ++i){
-            dG_dZ[i] = gate[i] * (1 - gate[i]);
-        }
-        reinterpret_cast<float4*>(&backBuffers.dG_dZ[4 * tid])[0] = reinterpret_cast<float4*>(&dG_dZ)[0];
-
-    }
-    
-    if(expert < E && tid < Cin/4){
-        float gw[4] = {0.0f};
-        float dG_dZ[4] = {0.0f};
-        reinterpret_cast<float4*>(&gw)[0] = reinterpret_cast<float4*>(&params.gw[expert * Cin + 4 * tid])[0];
-        reinterpret_cast<float4*>(&dG_dZ)[0] = reinterpret_cast<float4*>(&backBuffers.dG_dZ[4 * tid])[0];
-        for(int i = 0; i < 4; ++i){
-            gw[i] /= dG_dZ[expert];
-        }
-        reinterpret_cast<float4*>(&backBuffers.dG_dX[expert * Cin + 4 * tid])[0] = reinterpret_cast<float4*>(&gw)[0];
-        
-
-        float dE_dX[4] = {0.0f};
-        reinterpret_cast<float4*>(&dE_dX)[0] = reinterpret_cast<float4*>(&backBuffers.dE_dX[expert * Cin + 4 * tid])[0];
-        for(int i = 0; i < 4; ++i){
-            dE_dX[i] = buffers.sorted[expertIdx] * dE_dX[i];
-        }
-        reinterpret_cast<float4*>(&backBuffers.dE_dX[expert * Cin + 4 * tid])[0] = reinterpret_cast<float4*>(&dE_dX)[0];
-    }
-    if(expert < K && tid < Cin/4){
-        float regdL_dXtmp[4] = {0.0f};
-        float regdG_dX[4] = {0.0f};
-        float regdL_dG = 0.0f;
-        regdL_dG = backBuffers.dL_dG[expertIdx];
-        reinterpret_cast<float4*>(&regdG_dX)[0] = reinterpret_cast<float4*>(&backBuffers.dG_dX[expert * Cin + 4 * tid])[0];
-        #pragma unroll
-        for(int i = 0; i < 4; ++i){
-            regdL_dXtmp[i] = regdL_dG * regdG_dX[i];
-        }
-        reinterpret_cast<float4*>(&backBuffers.dL_dXtmp[expert * Cin + 4 * tid])[0] = reinterpret_cast<float4*>(&regdL_dXtmp)[0];
-    }
-
-    if(tid < Cin/4){
-        float regdL_dXsum[4] = {0.0f};
-        reinterpret_cast<float4*>(&regdL_dXsum)[0] = reinterpret_cast<float4*>(&backBuffers.dL_dXsum[4 * tid])[0];
-        float regdL_dX[4] = {0.0f};
-
-        for(int i = 0; i<K; ++i){
-            float regdL_dXtmp[4] = {0.0f};
-            reinterpret_cast<float4*>(&regdL_dXtmp)[0] = reinterpret_cast<float4*>(&backBuffers.dL_dXtmp[i * Cin + 4 * tid])[0];
-            float regdE_dX[4] = {0.0f};
-            reinterpret_cast<float4*>(&regdE_dX)[0] = reinterpret_cast<float4*>(&backBuffers.dE_dX[i * Cin + 4 * tid])[0];
-
+    if(expert == 0 && blockIdx.y == 0 && blockIdx.z == 0){
+        if(tid < E/4 && threadIdx.y == 0){
+            alignas(16) float gb[4] = {0.0f};
+            alignas(16) float lb[4] = {0.0f};
+            reinterpret_cast<float4*>(&gb)[0] = reinterpret_cast<float4*>(&gradients.gb[4 * tid])[0];
+            reinterpret_cast<float4*>(&lb)[0] = reinterpret_cast<float4*>(&loadBalance[4 * tid])[0];
             #pragma unroll
-            for(int j = 0; j < 4; ++j){
-                regdL_dXsum[j] += regdL_dXtmp[j];
-                regdL_dX[j] += regdE_dX[j];
-
+            for(int i = 0; i < 4; ++i){
+                gb[i] += lb[i] * alpha;
             }
 
+            reinterpret_cast<float4*>(&gradients.gb[4 * tid])[0] = reinterpret_cast<float4*>(&gb)[0];
+            alignas(16)float gate[4] = {0.0f};
+            alignas(16) float dG_dZ[4] = {0.0f};
+            reinterpret_cast<float4*>(&gate)[0] = reinterpret_cast<float4*>(&buffers.probs[4 * tid])[0];
+            for(int i = 0; i < E; ++i){
+                dG_dZ[i] = gate[i] * (1 - gate[i]);
+            }
+            reinterpret_cast<float4*>(&backBuffers.dG_dZ[4 * tid])[0] = reinterpret_cast<float4*>(&dG_dZ)[0];
+        }
+        __syncthreads();
+    }
+    await();
+
+    sgemm_naive(X, gradients.gb, gradients.gw, 1.0f, 0.0f, Cin, E, 1, 1);
+
+    
+    if(expert < K && blockIdx.y == 0 && blockIdx.z == 0){
+        if(tid < Cin/4 && threadIdx.y == 0){
+            alignas(16) float gw[4] = {0.0f};
+            float dG_dZ;
+            reinterpret_cast<float4*>(&gw)[0] = reinterpret_cast<float4*>(&params.gw[expertIdx * Cin + 4 * tid])[0];
+            dG_dZ= backBuffers.dG_dZ[expertIdx];
+            for(int i = 0; i < 4; ++i){
+                gw[i] *= dG_dZ;
+            }
+            reinterpret_cast<float4*>(&backBuffers.dG_dX[expert * Cin + 4 * tid])[0] = reinterpret_cast<float4*>(&gw)[0];
+            
+        }
+        __syncthreads();
+    }
+    await();
+
+    if(expert < K && blockIdx.y == 0 && blockIdx.z == 0){
+        if(tid < Cin/4 && threadIdx.y == 0){
+            alignas(16) float regdL_dXtmp[4] = {0.0f};
+            alignas(16) float regdG_dX[4] = {0.0f};
+            float regdL_dG = 0.0f;
+            regdL_dG = backBuffers.dL_dG[expertIdx];
+            reinterpret_cast<float4*>(&regdG_dX)[0] = reinterpret_cast<float4*>(&backBuffers.dG_dX[expert * Cin + 4 * tid])[0];
+            #pragma unroll
+            for(int i = 0; i < 4; ++i){
+                regdL_dXtmp[i] = regdL_dG * regdG_dX[i];
+            }
+            reinterpret_cast<float4*>(&backBuffers.dL_dXtmp[expert * Cin + 4 * tid])[0] = reinterpret_cast<float4*>(&regdL_dXtmp)[0];
+        }
+    }
+    await();
+    if(expert == 0 && blockIdx.y == 0 && blockIdx.z == 0){
+        if(tid < Cin/4 && threadIdx.y == 0){
+            alignas(16) float regdL_dX[4] = {0.0f};
+
+            for(int i = 0; i<K; ++i){
+                alignas(16) float regdL_dXtmp[4] = {0.0f};
+                reinterpret_cast<float4*>(&regdL_dXtmp)[0] = reinterpret_cast<float4*>(&backBuffers.dL_dXtmp[i * Cin + 4 * tid])[0];
+                alignas(16) float regdE_dX[4] = {0.0f};
+                reinterpret_cast<float4*>(&regdE_dX)[0] = reinterpret_cast<float4*>(&backBuffers.dE_dX[i * Cin + 4 * tid])[0];
+
+                #pragma unroll
+                for(int j = 0; j < 4; ++j){
+                    regdL_dX[j] += regdL_dXtmp[j] + regdE_dX[j];
+                }
+
+
+            }
+            reinterpret_cast<float4*>(&dL_dX[4 * tid])[0] = reinterpret_cast<float4*>(&regdL_dX)[0];
 
         }
-        reinterpret_cast<float4*>(&backBuffers.dL_dXsum[4 * tid])[0] = reinterpret_cast<float4*>(&regdL_dXsum)[0];
-        reinterpret_cast<float4*>(&dL_dX[4 * tid])[0] = reinterpret_cast<float4*>(&regdL_dX)[0];
-
+        __syncthreads();
     }
+    await();
 
-
-    sgemm<1, 16, 16, 1, 4>(backBuffers.dL_dXsum, dL_dY, dL_dX,  1.0f, 1.0f, 1, Cin, Cout, 1);
+    
+    
     
 }
 #endif

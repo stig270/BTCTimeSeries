@@ -87,8 +87,8 @@ struct TrainingConfig {
     float lrMin = 1e-5f; // Minimum learning rate
     int warmupSteps = 100; // Learning rate warmup steps
     int epochs = 10; // Number of training epochs
-    int saveEvery = 20000; // Save model every n steps
-    int logEvery = 10000; // Log training metrics every n steps
+    int saveEvery = 2000; // Save model every n steps
+    int logEvery = 1000; // Log training metrics every n steps
 };
 
 struct IntermediateBuffers {

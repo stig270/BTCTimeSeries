@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <chrono>
 #include <iomanip>
+#include <random>
+
 
 struct DataPoint {
     std::string timestamp;
@@ -104,8 +106,11 @@ public:
     
     DatasetSplitter(TimeSeriesDataset& dataset, 
                     float train_ratio = 0.8, 
-                    int window_size = 32) {
+                    int window_size = 31) {
         auto all_timestamps = dataset.getValidStartTimestamps(window_size);
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::shuffle(all_timestamps.begin(), all_timestamps.end(), gen);
         
         size_t train_size = static_cast<size_t>(all_timestamps.size() * train_ratio);
         

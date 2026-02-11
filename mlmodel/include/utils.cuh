@@ -9,7 +9,7 @@ extern __device__ int SyncFlag;
 extern __device__ int Count;
 
 __device__ inline void await(){
-    if(threadIdx.x == 0){
+    if(threadIdx.x == 0 && threadIdx.y == 0){
         
         int flag = atomicAdd(&SyncFlag, 0);
         int count = atomicAdd(&Count, 1) + 1;
@@ -70,7 +70,7 @@ __device__ inline void sgemm(float* A, float*B, float*C, float alpha, float beta
 
         for(int i = 0; i < K; i += BK){
 
-            if(threadIdx.x < BK * BM / 4){
+            if(threadIdx.x < BK * BM / 4 && threadIdx.y == 0){
                 float4 tmp = reinterpret_cast<float4*>(&A[irowA * K + icolA * 4])[0];
                 As[(icolA * 4 + 0) * BM + irowA] = tmp.x;
                 As[(icolA * 4 + 1) * BM + irowA] = tmp.y;
@@ -78,12 +78,11 @@ __device__ inline void sgemm(float* A, float*B, float*C, float alpha, float beta
                 As[(icolA * 4 + 3) * BM + irowA] = tmp.w;   
             }
             __syncthreads();
-            if(threadIdx.x < BK * BN / 4){
+            if(threadIdx.x < BK * BN / 4 && threadIdx.y == 0){
                 reinterpret_cast<float4*>(&Bs[icolB * 4 + irowB * BN])[0] = reinterpret_cast<float4*>(&B[irowB * N + icolB * 4])[0];
             }
             __syncthreads();
-            if(threadIdx.x < threadsPerBlockTile){
-
+            if(threadIdx.x < threadsPerBlockTile && threadIdx.y == 0){
                 A += BK;
                 B += BK * N;
 
@@ -124,25 +123,50 @@ __device__ inline void sgemm(float* A, float*B, float*C, float alpha, float beta
     
 }
 
-//for testing
+//for testing, adapted to allow blocks to work
 __device__ inline void sgemm_naive(float* A, float*B, float*C, float alpha, float beta, int M, int N, int K, int D){
     const int row = threadIdx.x;
     const int col = threadIdx.y;
 
-    A += blockIdx.x * M * K;
-    B += blockIdx.x * K * N;
-    C += blockIdx.x * M * N;
+    
+    float value;
+    const int warpSize = 32;
+    int rowIdx;
+    int colIdx;
 
-    if(row < M &&  col < N && blockIdx.x < D){
-        float value = 0.0f;
-        for(int i = 0; i < K; ++i){
+    if(blockIdx.x < D && blockIdx.y == 0 && blockIdx.z == 0){
+        A += blockIdx.x * M * K;
+        B += blockIdx.x * K * N;
+        C += blockIdx.x * M * N;
 
-            value += A[row * K + i] * B[i * N + col];
+        if(M > warpSize || N > warpSize){
+            for(int r = 0; r < M/warpSize; ++r)
+            {
+                rowIdx = row + r * warpSize;
+                for(int c = 0; c < N/warpSize; ++c)
+                {
+                    colIdx = col + c * warpSize;
+                    if(rowIdx < M && colIdx < N){
+                        value = beta * C[rowIdx * N + colIdx];
+                        for(int i = 0; i < K; ++i){
+                            value += alpha * A[rowIdx * K + i] * B[i * N + colIdx];
+                        }
+                        C[rowIdx * N + colIdx] = value;
+                    }
+                }
+            }
         }
-        C[row * N + col] = alpha * value + beta * C[row * N + col];
-        
+        else{
+            if(row < M && col < N){
+                value = beta * C[row * N + col];
+                for(int i = 0; i < K; ++i){
+                    value += alpha * A[row * K + i] * B[i * N + col];
+                }
+                C[row * N + col] = value;
+            }
+        }
+        __syncthreads();
     }
-    __syncthreads();
     await();
     
 }
@@ -204,13 +228,13 @@ __device__ inline void dotProduct(float* A, float* B, float*C, int D, int E, int
     int vecPerRow = D / 4;
     int tid = threadIdx.x;
     const int mask = (1u << vecPerRow) - 1;
-    float regA[4] = {0.0f};
-    float regB[4] = {0.0f};
+    alignas(16) float regA[4] = {0.0f};
+    alignas(16) float regB[4] = {0.0f};
     float result = 0.0f;
 
-    if(baseOffset < D * E * F){
+    if(baseOffset < D * E * F && blockIdx.z == 0){
         
-        if(tid<vecPerRow){
+        if(tid<vecPerRow && threadIdx.y == 0){
            
             reinterpret_cast<float4*>(regA)[0] = reinterpret_cast<float4*>(&A[baseOffset + tid * 4])[0];
             reinterpret_cast<float4*>(regB)[0] = reinterpret_cast<float4*>(&B[baseOffset + tid * 4])[0];
