@@ -68,16 +68,33 @@ template<const int BM, const int BN, const int BK, const int TM, const int TN, c
 __device__ inline void linearBackward(float* dL_dZ, float* dL_dW, float* dL_dX, float* X, float* W,
      const int M, const int N, const int K, const int D){
    
-    
-    sgemm_naive(X, dL_dZ, dL_dW, 1.0f, 0.0f, K, N, M, D);
-
     sgemm<BM, BK, BN, TM, TK>(dL_dZ, W, dL_dX, 1.0f, 0.0f, M, K, N, D);
+
+    outerProduct(X, dL_dZ, dL_dW, K, N, M, D);
+    
 }
 
 __device__ inline void simpleLinearBackward(float* dL_dZ, float* dL_dW, float* dL_dX, float* X, float* W,
      const int M, const int N, const int K){
     
-    sgemm_naive(X, dL_dZ, dL_dW, 1.0f, 0.0f, K, N, M, 1);
+    int tid = threadIdx.x;
+    if(tid < K/4 && blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0){
+        alignas(16) float regX[4] = {0.0f};
+        float regdL_dZ[2] = {0.0f};
+        reinterpret_cast<float4*>(regX)[0] = reinterpret_cast<float4*>(&X[tid * 4])[0];
+        reinterpret_cast<float2*>(regdL_dZ)[0] = reinterpret_cast<float2*>(&dL_dZ[0])[0];
+        for(int i = 0; i < N; ++i){
+            alignas(16) float regdL_dW[4] = {0.0f};
+            for(int j = 0; j < 4; ++j){
+                regdL_dW[j] = regX[j] * regdL_dZ[i];
+            }
+            dL_dW[(tid * 4) * N + i] = regdL_dW[0];
+            dL_dW[(tid * 4 + 1) * N + i] = regdL_dW[1];
+            dL_dW[(tid * 4 + 2) * N + i] = regdL_dW[2];
+            dL_dW[(tid * 4 + 3) * N + i] = regdL_dW[3];
+        }
+    }
+    __syncthreads();
 
     sgemm_naive(dL_dZ, W, dL_dX, 1.0f, 0.0f, M, K, N, 1);
 }

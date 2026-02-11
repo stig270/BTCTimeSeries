@@ -470,9 +470,7 @@ void runTrainingLoop(const ModelHyperparameters& config, const TrainingConfig& t
             learnRate = calculateLearnRate(initialLR, lrMin,  warmupSteps, t, epochs * shuffled_timestamps.size());
             transformerForward(X, P, params, config, buffers);
             cudaDeviceSynchronize();
-            transformerBackward(params, gradients, velocity, momentum, config, learnRate, alpha, beta, beta1, beta2, weightDecay, t,
-                buffers, backbuffers, Y, P);
-            CHECK_CUDA();
+            transformerBackward(params, gradients, velocity, momentum, config, learnRate, alpha, beta, beta1, beta2, weightDecay, t, buffers, backbuffers, Y, P);
             cudaDeviceSynchronize();
             cudaMemcpy(&PHost, P, PSize * sizeof(float), cudaMemcpyDeviceToHost); 
             if(PHost[static_cast<int>(label)] > PHost[1 - static_cast<int>(label)]){
@@ -481,6 +479,7 @@ void runTrainingLoop(const ModelHyperparameters& config, const TrainingConfig& t
 
             if (t % logEvery == 0) {
                 calculateLoss(P, Y, loss, F, epsilon);
+                cudaDeviceSynchronize();
                 cudaMemcpy(&lossHost, loss, sizeof(float), cudaMemcpyDeviceToHost);
                 std::cout << "Step " << t << ", Loss: " << lossHost << std::endl;
                 cudaMemset(loss, 0, sizeof(float));
@@ -506,8 +505,10 @@ void runTrainingLoop(const ModelHyperparameters& config, const TrainingConfig& t
                 cudaMemcpy(hostParameters.BCLS.data(), params.BCLS, parameterSizes.BCLS * sizeof(float), cudaMemcpyDeviceToHost);
 
                 saveParams(parameterSizes, hostParameters, modelPath);
-            }
 
+                std::cout << "Model saved at step " << t << std::endl;
+            }
+            
             t++;
         }
 
@@ -528,7 +529,7 @@ void runTrainingLoop(const ModelHyperparameters& config, const TrainingConfig& t
             }
             cudaMemset(P, 0, PSize * sizeof(float));
             cudaMemcpy(X, XHost.data(), (XSize - C) * sizeof(float), cudaMemcpyHostToDevice);
-            transformerForward(X, P, params, config, buffers);
+            //transformerForward(X, P, params, config, buffers);
             cudaMemcpy(&PHost, P, PSize * sizeof(float), cudaMemcpyDeviceToHost);
 
             if(PHost[static_cast<int>(label)] > PHost[1 - static_cast<int>(label)]){

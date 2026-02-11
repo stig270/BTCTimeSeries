@@ -126,18 +126,17 @@ __device__ inline void sparseMoeBackward(float* dL_dY, float* dL_dX, float* X, c
     if(expert < K && blockIdx.y == 0 && blockIdx.z == 0){
         if(tid < Cout/4 && threadIdx.y == 0){
             alignas(16) float gradY[4] = {0.0f};
-            alignas(16)float gradB[4] = {0.0f};
             float gy = buffers.probs[expert];
 
             reinterpret_cast<float4*>(gradY)[0] = reinterpret_cast<float4*>(&dL_dY[4 * tid])[0];
 
             #pragma unroll
             for(int i = 0; i < 4; ++i){
-                gradB[i] = gradY[i] * gy;
+                gradY[i] *= gy;
             }
 
-            reinterpret_cast<float4*>(&backBuffers.dL_dBtmp[expert * Cout + 4 * tid])[0] = reinterpret_cast<float4*>(&gradB)[0];
-            reinterpret_cast<float4*>(&gradients.b[expertIdx * Cout + 4 * tid])[0] = reinterpret_cast<float4*>(&gradB)[0];
+            reinterpret_cast<float4*>(&backBuffers.dL_dBtmp[expert * Cout + 4 * tid])[0] = reinterpret_cast<float4*>(&gradY)[0];
+            reinterpret_cast<float4*>(&gradients.b[expertIdx * Cout + 4 * tid])[0] = reinterpret_cast<float4*>(&gradY)[0];
                         
             for(int i = 0; i < Cin; ++i){
                 reinterpret_cast<float4*>(&backBuffers.Wtmp[expert * Cin * Cout + i * Cout + 4 * tid])[0] =
@@ -200,19 +199,17 @@ __device__ inline void sparseMoeBackward(float* dL_dY, float* dL_dX, float* X, c
 
             reinterpret_cast<float4*>(&gradients.gb[4 * tid])[0] = reinterpret_cast<float4*>(&gb)[0];
             alignas(16)float gate[4] = {0.0f};
-            alignas(16) float dG_dZ[4] = {0.0f};
             reinterpret_cast<float4*>(&gate)[0] = reinterpret_cast<float4*>(&buffers.probs[4 * tid])[0];
             for(int i = 0; i < E; ++i){
-                dG_dZ[i] = gate[i] * (1 - gate[i]);
+                gate[i] *= (1 - gate[i]);
             }
-            reinterpret_cast<float4*>(&backBuffers.dG_dZ[4 * tid])[0] = reinterpret_cast<float4*>(&dG_dZ)[0];
+            reinterpret_cast<float4*>(&backBuffers.dG_dZ[4 * tid])[0] = reinterpret_cast<float4*>(&gate)[0];
         }
         __syncthreads();
     }
     await();
 
-    sgemm_naive(X, gradients.gb, gradients.gw, 1.0f, 0.0f, Cin, E, 1, 1);
-
+    outerProduct(X, gradients.gb, gradients.gw, Cin, E, 1, 1);
     
     if(expert < K && blockIdx.y == 0 && blockIdx.z == 0){
         if(tid < Cin/4 && threadIdx.y == 0){
@@ -232,27 +229,28 @@ __device__ inline void sparseMoeBackward(float* dL_dY, float* dL_dX, float* X, c
 
     if(expert < K && blockIdx.y == 0 && blockIdx.z == 0){
         if(tid < Cin/4 && threadIdx.y == 0){
-            alignas(16) float regdL_dXtmp[4] = {0.0f};
-            alignas(16) float regdG_dX[4] = {0.0f};
+            alignas(16) float regdL_dX[4] = {0.0f};
             float regdL_dG = 0.0f;
             regdL_dG = backBuffers.dL_dG[expertIdx];
-            reinterpret_cast<float4*>(&regdG_dX)[0] = reinterpret_cast<float4*>(&backBuffers.dG_dX[expert * Cin + 4 * tid])[0];
+            reinterpret_cast<float4*>(&regdL_dX)[0] = reinterpret_cast<float4*>(&backBuffers.dG_dX[expert * Cin + 4 * tid])[0];
             #pragma unroll
             for(int i = 0; i < 4; ++i){
-                regdL_dXtmp[i] = regdL_dG * regdG_dX[i];
+                regdL_dX[i] *= regdL_dG;
             }
-            reinterpret_cast<float4*>(&backBuffers.dL_dXtmp[expert * Cin + 4 * tid])[0] = reinterpret_cast<float4*>(&regdL_dXtmp)[0];
+            reinterpret_cast<float4*>(&backBuffers.dL_dXtmp[expert * Cin + 4 * tid])[0] = reinterpret_cast<float4*>(&regdL_dX)[0];
         }
+        __syncthreads();
     }
     await();
     if(expert == 0 && blockIdx.y == 0 && blockIdx.z == 0){
         if(tid < Cin/4 && threadIdx.y == 0){
             alignas(16) float regdL_dX[4] = {0.0f};
-
+            alignas(16) float regdL_dXtmp[4] = {0.0f};
+            alignas(16) float regdE_dX[4] = {0.0f};
             for(int i = 0; i<K; ++i){
-                alignas(16) float regdL_dXtmp[4] = {0.0f};
+                
                 reinterpret_cast<float4*>(&regdL_dXtmp)[0] = reinterpret_cast<float4*>(&backBuffers.dL_dXtmp[i * Cin + 4 * tid])[0];
-                alignas(16) float regdE_dX[4] = {0.0f};
+                
                 reinterpret_cast<float4*>(&regdE_dX)[0] = reinterpret_cast<float4*>(&backBuffers.dE_dX[i * Cin + 4 * tid])[0];
 
                 #pragma unroll

@@ -208,8 +208,7 @@ __device__ inline void attentionBackward(const AttentionBuffers& buffers,
     }
     await();
 
-    sgemm_naive(X, gradients.qkvb, gradients.qkvw, 1.0f, 0.0f, C, 3*N*H, 1, 1);
-
+    outerProduct(X, gradients.qkvb, gradients.qkvw, C, 3*N*H, 1, 1);
 
     sgemm<1, 16, 8, 1, 4>(backBuffers.dL_dqkv, params.qkvw, backBuffers.dL_dXtmp, 1.0f, 0.0f, 1, C, C, 3);
     

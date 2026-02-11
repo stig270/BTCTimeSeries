@@ -56,7 +56,6 @@ inline __device__ void optimizerStep(Parameter& t, float learningRate, float bet
         
         __syncthreads();
     }
-    await();
 }
 
 

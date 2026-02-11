@@ -107,7 +107,7 @@ __device__ inline void sgemm(float* A, float*B, float*C, float alpha, float beta
 
             for (int m = 0; m < TM; ++m){
                 for (int n = 0; n < TN; n += 4){
-                    float4 tmp = reinterpret_cast<float4*>(&C[(m + trow * TM) * N + tcol * TN + n])[0];
+                    float4 tmp = (beta != 0.0f) ? reinterpret_cast<float4*>(&C[(m + trow * TM) * N + tcol * TN + n])[0] : make_float4(0.0f, 0.0f, 0.0f, 0.0f);
                     tmp.x = alpha * tresults[m * TN + n] + beta * tmp.x;
                     tmp.y = alpha * tresults[m * TN + n + 1] + beta * tmp.y;
                     tmp.z = alpha * tresults[m * TN + n + 2] + beta * tmp.z;
@@ -147,7 +147,7 @@ __device__ inline void sgemm_naive(float* A, float*B, float*C, float alpha, floa
                 {
                     colIdx = col + c * warpSize;
                     if(rowIdx < M && colIdx < N){
-                        value = beta * C[rowIdx * N + colIdx];
+                        value = (beta != 0.0f) ? beta * C[rowIdx * N + colIdx] : 0.0f;
                         for(int i = 0; i < K; ++i){
                             value += alpha * A[rowIdx * K + i] * B[i * N + colIdx];
                         }
@@ -158,7 +158,7 @@ __device__ inline void sgemm_naive(float* A, float*B, float*C, float alpha, floa
         }
         else{
             if(row < M && col < N){
-                value = beta * C[row * N + col];
+                value = (beta != 0.0f) ? beta * C[row * N + col] : 0.0f;
                 for(int i = 0; i < K; ++i){
                     value += alpha * A[row * K + i] * B[i * N + col];
                 }
@@ -228,12 +228,12 @@ __device__ inline void dotProduct(float* A, float* B, float*C, int D, int E, int
     int vecPerRow = D / 4;
     int tid = threadIdx.x;
     const int mask = (1u << vecPerRow) - 1;
-    alignas(16) float regA[4] = {0.0f};
-    alignas(16) float regB[4] = {0.0f};
-    float result = 0.0f;
+    
 
     if(baseOffset < D * E * F && blockIdx.z == 0){
-        
+        alignas(16) float regA[4] = {0.0f};
+        alignas(16) float regB[4] = {0.0f};
+        float result = 0.0f;
         if(tid<vecPerRow && threadIdx.y == 0){
            
             reinterpret_cast<float4*>(regA)[0] = reinterpret_cast<float4*>(&A[baseOffset + tid * 4])[0];
@@ -259,5 +259,28 @@ __device__ inline void dotProduct(float* A, float* B, float*C, int D, int E, int
 
 }
 
+
+__device__ inline void outerProduct(float* A, float* B, float* C, int Cin, int Cout, int T, int E){
+    int tid = threadIdx.x;
+    int token = blockIdx.z;
+    int expert = blockIdx.x;
+    if(token < T && blockIdx.x < E && blockIdx.y == 0){
+        if(tid < Cout/4 && threadIdx.y == 0){
+            alignas(16) float regA[4] = {0.0f};
+            alignas(16) float regB[4] = {0.0f};
+            reinterpret_cast<float4*>(regB)[0] = reinterpret_cast<float4*>(&B[expert * T * Cin * Cout + token * Cout + tid * 4])[0];
+            for(int i = 0; i < Cin/4; ++i){
+                reinterpret_cast<float4*>(regA)[0] = reinterpret_cast<float4*>(&A[expert * T * Cin * Cout + token * Cin + i * 4])[0];
+                regB[0] *= regA[0];
+                regB[1] *= regA[1];
+                regB[2] *= regA[2];
+                regB[3] *= regA[3];
+                reinterpret_cast<float4*>(&C[expert * T * Cin * Cout + token * Cin * Cout + i * Cout + tid * 4])[0] = reinterpret_cast<float4*>(regB)[0];
+            }
+        }
+        __syncthreads();
+    }
+    await();
+}
 
 #endif 

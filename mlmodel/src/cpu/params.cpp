@@ -108,6 +108,7 @@ HostParameters initializeParams(const ParameterSizes& parameterSizes, const Mode
 
     hostParams.WNorm = std::vector<float>(parameterSizes.WNorm);
     xavierInit(hostParams.WNorm, parameterSizes.WNorm, C, C);
+    
     hostParams.BNorm = std::vector<float>(parameterSizes.BNorm);
     zeroInit(hostParams.BNorm, parameterSizes.BNorm);
 

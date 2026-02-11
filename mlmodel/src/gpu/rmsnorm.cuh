@@ -73,15 +73,16 @@ template<const int BM, const int BN, const int BK, const int TM, const int TN, c
 __device__ inline void RMSNormBackward(float* dL_dZ, float* dL_dXNorm, float* dL_dW, float* dL_dX, 
     float* XNorm,float* W, float RMS, const int C, const float epsilon){
 
-    linearBackward<BM, BN, BK, TM, TN, TK>(dL_dZ, XNorm, W, dL_dXNorm, dL_dW, 1, C, C, 1);
+    linearBackward<BM, BN, BK, TM, TN, TK>(dL_dZ, dL_dW, dL_dXNorm, XNorm, W, 1, C, C, 1);
 
     float yg;
     dotProduct(dL_dXNorm, XNorm, &yg, C, 1, 1);
 
     const int tid = threadIdx.x;
-    alignas(16) float regG[4];
-    alignas(16) float regXNorm[4];
+    
     if(tid < C / 4 && threadIdx.y == 0 && blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0){
+        alignas(16) float regG[4];
+        alignas(16) float regXNorm[4];
         reinterpret_cast<float4*>(regG)[0] = reinterpret_cast<const float4*>(&dL_dXNorm[tid * 4])[0];
         reinterpret_cast<float4*>(regXNorm)[0] = reinterpret_cast<const float4*>(&XNorm[tid * 4])[0];
         alignas(16) float dL_dX[4]; 
