@@ -3,7 +3,6 @@
 
 #include "utils.cuh"
 #include <cuda_runtime.h>
-#include <cooperative_groups.h>
 
 template<const int BM, const int BN, const int BK, const int TM, const int TN>
 __device__ inline void linearForward(float* X, float* W, float* B, float* Z, const int M, const int N, const int K, const int D){

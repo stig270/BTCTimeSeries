@@ -3,7 +3,6 @@
 
 #include "utils.cuh"
 #include <cuda_runtime.h>
-#include <cooperative_groups.h>
 
 __device__ inline void softmaxForward(float* X, float* Y, int C, int T, int N){
     const int tid = threadIdx.x;

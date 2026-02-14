@@ -3,7 +3,6 @@
 #include "utils.cuh"
 #include "linear.cuh"
 #include <cuda_runtime.h>
-#include <cooperative_groups.h>
 
 
 template<const int BM, const int BN, const int BK, const int TM, const int TN>

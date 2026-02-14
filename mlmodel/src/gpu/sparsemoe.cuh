@@ -6,7 +6,6 @@
 #include "linear.cuh"
 #include "activationfunctions.cuh"
 #include <cuda_runtime.h>
-#include <cooperative_groups.h>
 
 
 struct SparseMoeBuffers {

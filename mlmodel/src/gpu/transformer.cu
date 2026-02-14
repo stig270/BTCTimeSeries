@@ -11,7 +11,6 @@
 #include "loss.cuh"
 #include "config.h"
 #include <cuda_runtime.h>
-#include <cooperative_groups.h>
 
 __device__ int SyncFlag = 0;
 __device__ int Count = 0;
@@ -514,11 +513,7 @@ void transformerBackward(ModelParameters& params, ModelParameters& gradients, Mo
         gradients.WNorm + 2*L * C * C, buffers.RMS + 2*L, backbuffers.dL_dMoeY2 + (L - 1) * C,  C, F, epsilon
     );
     cudaDeviceSynchronize();
-    cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        printf("CUDA error after classifier backward: %s\n", cudaGetErrorString(err));
-    }
-    printf("Device synchronized after classifier backward\n ");
+
     dim3 moeGrid(E, C/16, C/16);
     dim3 moeBlock(C, 1, 1);
 
@@ -560,10 +555,7 @@ void transformerBackward(ModelParameters& params, ModelParameters& gradients, Mo
 
     AttentionBackBuffers* attnBackBuffers;
     cudaMallocManaged(&attnBackBuffers, sizeof(AttentionBackBuffers));
-    err = cudaGetLastError();
-    if (err != cudaSuccess) {   
-        printf("CUDA error after malloc: %s\n", cudaGetErrorString(err));
-    }
+    
     for(int l = L - 1; l >= 0; --l){
 
 
@@ -658,13 +650,8 @@ void transformerBackward(ModelParameters& params, ModelParameters& gradients, Mo
              backbuffers.dL_dXNorm + (2 * l + 1) * C, buffers.moeNorm + l * C, gradients.BNorm + (2*l + 1) * C,
               buffers.moeHidden + l * C * 4, buffers.moeX + l * C, alpha, beta, C, E, K, T, epsilon
         );
-        err = cudaGetLastError();
-        if (err != cudaSuccess) {
-            printf("CUDA error in fusedSparseMoeBackward at layer %d: %s\n", l, cudaGetErrorString(err));
-        }
-        printf("Finished MoE layer %d backward\n", l);
+        
         cudaDeviceSynchronize();
-        printf("Device sync\n");    
         *attnBuffers = {
             buffers.qkv + l * N * T * H * 3,
             buffers.Q + l * N * T * H,
@@ -740,7 +727,6 @@ void transformerBackward(ModelParameters& params, ModelParameters& gradients, Mo
     dim3 optimGrid(2 * L + 1, 4*C, 4*C);
     dim3 optimBlock(4*C, 1, 1);
     optimizer<<<optimGrid, optimBlock>>>(params, gradients, velocity, momentum, config, learningRate, beta1, beta2, l2Lambda, time, epsilon);
-    printf("Finished optimizer step\n");
 }
 
 

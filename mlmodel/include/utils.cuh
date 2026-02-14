@@ -2,9 +2,7 @@
 #define UTILS_CUH
 
 #include <cuda_runtime.h>
-#include <cooperative_groups.h>
 
-// Sense reversing barrier with atomic sychronization primatives
 extern __device__ int SyncFlag;
 extern __device__ int Count;
 
